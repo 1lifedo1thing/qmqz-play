@@ -1,0 +1,1 @@
+[{"id":1003,"parent":1087,"name":"Icon","active":true,"p":[0.0,0.0],"s":[64.0,64.0],"z":0.0,"widget":{"kind":"UITexture","pivot":4,"color":[255,255,255,255],"depth":0}},{"id":1087,"parent":0,"name":"HeadIconTableItem","active":true,"p":[-0.124,0.379],"s":[1.0,1.0],"z":-0.16,"hit":[0.0,0.0,64.0,64.0]}]

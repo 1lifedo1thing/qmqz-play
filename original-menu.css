@@ -1,0 +1,36 @@
+@font-face { font-family: OriginalMYH; src: url("original-ui/MYH.ttf") format("truetype"); font-display: block; }
+@font-face { font-family: OriginalFatChar; src: url("original-ui/FatChar.ttf") format("truetype"); font-display: block; }
+@font-face { font-family: OriginalNumber; src: url("original-ui/Number.ttf") format("truetype"); font-display: block; }
+#original-menu { position: absolute; inset: 0; overflow: hidden; background: #000; }
+#original-menu[data-screen="Exhibition"] { background: transparent; touch-action: none; }
+#original-menu[data-screen="Exhibition"] [data-object="Stage"] { pointer-events: none; }
+#original-stage { position: absolute; transform-origin: 0 0; left: 50%; top: 50%; }
+.ngui-drawings, .ngui-fields { display: contents; }
+.ngui-drawings > *, .ngui-fields > * { position: absolute; margin: 0; box-sizing: border-box; }
+.ngui-label, .ngui-input { font-family: OriginalMYH, sans-serif; line-height: 1.12; white-space: pre; }
+.ngui-label, .ngui-art { pointer-events: none; user-select: none; }
+.ngui-glyph-text { position: absolute; inset: 0; opacity: 0; white-space: pre; pointer-events: none; }
+.ngui-hit, .ngui-input { touch-action: manipulation; appearance: none; border: 0; padding: 0; border-radius: 0; background: transparent; }
+.ngui-hit { cursor: pointer; }
+.ngui-hit[data-room-id] { touch-action: none; }
+#original-menu[data-screen="UpgradeListWindow"] { touch-action: pan-y; }
+.ngui-hit:focus-visible, .ngui-input:focus-visible { outline: 1px solid currentColor; }
+.ngui-input { user-select: text; line-height: 1.3; outline-offset: 1px; }
+.ngui-input::placeholder { color: var(--placeholder); opacity: 1; }
+
+.ngui-clip { overflow: hidden; touch-action: none; }
+/* These two original clipping panels contain only the equipped items' star graphics. */
+#original-menu[data-screen="EquipWindow"] .ngui-clip:is([data-panel="8337"], [data-panel="6194"]) { pointer-events: none; }
+.ngui-clip > div > * { position: absolute; margin: 0; }
+.ngui-range { appearance: none; opacity: 0; cursor: pointer; }
+.ngui-motion { width: 0; height: 0; transform-origin: 0 0; pointer-events: none; }
+.ngui-motion > * { position: absolute; margin: 0; box-sizing: border-box; }
+.ngui-motion > .ngui-hit { pointer-events: auto; }
+
+#local-roles { position:absolute; right:max(3vw,env(safe-area-inset-right)); bottom:max(4vh,env(safe-area-inset-bottom)); }
+#local-roles button { font:clamp(14px,2.25vh,22px) OriginalMYH,sans-serif; color:white; border:1px solid #86959a;
+  padding:.5em 1em; background:#101920ed; cursor:pointer; }
+#local-roles button:focus-visible { outline:2px solid #ffdb67; }
+#role-choices:not([hidden]) { position:absolute; right:0; bottom:100%; display:grid; gap:2px; margin-bottom:4px;
+  width:max-content; min-width:100%; max-width:70vw; max-height:65vh; overflow:auto; }
+#role-choices [aria-pressed="true"] { color:#ffdb67; }
