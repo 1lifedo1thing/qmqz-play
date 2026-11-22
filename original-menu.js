@@ -24,6 +24,8 @@
     dialog=name; dialogScroll=0; family=1; render();
   }
   function closeDialog() {
+    if(dialog==="Layout"){openDialog("GameOptions");return;}
+    if(state.mode==="match" && dialog==="GameOptions")window.dispatchEvent(new Event("qmqz-close-fight-settings"));
     const parent=["StoreItemDetails","PackItem","PrizeInfo"].includes(dialog) && qmqzStoreItems.previous();
     dialog=parent||false;render();
   }
@@ -32,7 +34,8 @@
     if(axis==="music" || axis==="effects") {
       window.qmqzVolume.set(axis,value);
       render();
-    } else command("sensitivity-"+axis+":"+value.toFixed(4));
+    } else if(axis==="assist")command("aim-assist-strength:"+value.toFixed(4));
+    else command("sensitivity-"+axis+":"+value.toFixed(4));
   }
   let entryRoles, entering = false;
   const switcher = document.querySelector("#local-roles");
@@ -132,6 +135,9 @@
     const n=nodeById(nodes,id);
     if(n?.widget && image) n.widget={...n.widget,image,fitWeapon:/^(?:Icon_(?:WP_|DG_|Axe[._]|Grenade_|Launcher_)|Sketch_|Grenade_)/i.test(image)};
   };
+  function roomModeName(room,specials) {
+    return (room.gameMode!==13 && room.equiplimitid && specials.find(r=>r.id===room.equiplimitid)?.name) || room.modeName;
+  }
   async function entryContent() {
     entryRoles = await window.qmqzLocalRoles();
     const nodes=(await data("EnterGame")).filter(n=>[60,144,143,142,"mainData-31"].includes(n.id)).map(n=>({...n}));
@@ -153,9 +159,80 @@
     }
     return nodes;
   }
+  function addAimAssistOptions(nodes) {
+    // Use the original option switch and slider art, spacing and button feedback.
+    const children=new Map();
+    for(const n of nodes) {
+      if(!children.has(n.parent))children.set(n.parent,[]);
+      children.get(n.parent).push(n);
+    }
+    function row(id,y) {
+      const source=nodeById(nodes,id);
+      const branch=[];
+      function visit(n) {
+        branch.push(n.id===id?{...n,parent:0}:n);
+        for(const child of children.get(n.id)||[])visit(child);
+      }
+      visit(source);
+      nodes.push(...clonePrefab(branch,"assist-",6354,y,{}, {p:[source.p[0],y]}));
+    }
+    row(8292,-120);
+    row(4658,-180);
+    const enabled=state.aimAssistEnabled??true, strength=state.aimAssistStrength??.5;
+    label(nodes,"assist-1642","辅助瞄准");
+    label(nodes,"assist-8748",enabled?"开启":"关闭");
+    edit(nodes,"assist-8292",{name:"AimAssist",label:"辅助瞄准",pressed:enabled,hit:[0,0,225,50],
+      action:()=>command("aim-assist-enabled:"+(enabled?"0":"1"))});
+    label(nodes,"assist-5116","辅助强度 "+Math.round(strength*100)+"%");
+    edit(nodes,"assist-5116",{p:[-180,0]});
+    edit(nodes,"assist-4658",{ComplexSlider:{style:5,slider:"assist-3902",btnMinus:"assist-2784",btnPlus:"assist-1478"}});
+    edit(nodes,"assist-3902",{UISlider:{thumb:"assist-7942",foreground:"assist-6003"}});
+    // Leave the original rows below sensitivity in their relative positions.
+    for(const n of children.get(4439))if(n.p[1]<=124)n.p=[n.p[0],n.p[1]-120];
+  }
+  function configureOptions(nodes){
+    addAimAssistOptions(nodes);
+    qmqzTouchLayout.shortcutOptions(nodes,edit,picture,render,state,notify);
+    edit(nodes,2282,{action:closeDialog});
+    edit(nodes,5573,{action:()=>openDialog("Layout")});
+    for(const id of [1208,5894])edit(nodes,id,{action:()=>{qmqzTouchLayout.toggleFire();render();}});
+    label(nodes,8748,qmqzTouchLayout.fixed?"固定":"跟随");
+    edit(nodes,4123,{action:()=>{
+      qmqzTouchLayout.reset();qmqzTouchLayout.resetFire();qmqzTouchLayout.resetShortcuts();
+      for(const channel of ["music","effects"])window.qmqzVolume.set(channel,1);
+      for(const [axis,value] of Object.entries(defaults))setSlider(axis,value);
+      command("aim-assist-enabled:1");setSlider("assist",.5);
+      render();
+    }});
+    const content=nodeById(nodes,4439);
+    content.p=[content.p[0],content.p[1]+dialogScroll];
+    for(const n of nodes.filter(n=>n.ComplexSlider)) {
+      const {style,slider,btnMinus,btnPlus}=n.ComplexSlider;
+      const axis=["music","effects","x","y","pad","assist"][style];
+      const value=axis==="assist"?(state.aimAssistStrength??.5):style<2?window.qmqzVolume.get(axis):axisValue(axis);
+      const track=nodeById(nodes,slider), dims=track.hit;
+      const thumb=nodeById(nodes,track.UISlider.thumb), fg=nodeById(nodes,track.UISlider.foreground);
+      thumb.p=[dims[2]*value,thumb.p[1]]; fg.s=[293*value,fg.s[1]];
+      edit(nodes,btnMinus,{action:()=>setSlider(axis,value-.02),axis:axis+"-minus"});
+      edit(nodes,btnPlus,{action:()=>setSlider(axis,value+.02),axis:axis+"-plus"});
+      edit(nodes,slider,{slide:axis,value});
+    }
+  }
   async function content(screen) {
     if(screen==="InitUI")return entryContent();
-    let nodes = (await data(screen)).map(n => ({...n}));
+    if(dialog==="Layout"){
+      const nodes=(await data("Layout")).map(n=>({...n}));
+      await qmqzTouchLayout.modal(nodes,closeDialog,render);
+      return nodes;
+    }
+    if(screen==="FightSettings"){
+      const nodes=(await data("GameOptions")).map(n=>({...n,overlay:true}));
+      edit(nodes,122,{active:true});
+      configureOptions(nodes);
+      return nodes;
+    }
+    const challengeRoom=screen==="TableWindow" && state.room?.gameMode===12;
+    let nodes = (await data(challengeRoom?"ChallengeRoom":screen)).map(n => ({...n}));
     const socialHooks={data,edit,label,picture,nodeById,clonePrefab,go,render,notify,values,availableHead};
     if(qmqzSocial.modals[screen]){
       const base=(await content(qmqzSocial.parent(screen))).map(n=>({...n,action:null,field:null,slide:null}));
@@ -216,7 +293,8 @@
       const shell = (await data("MainUI")).filter(n=>!nodeById(nodes,n.id)).map(n=>({...n}));
       const whitelist = new Set([7805,8632,3106]);
       const rootOf = n => !n ? false : whitelist.has(n.id) || rootOf(shell.find(a=>a.id===n.parent));
-      nodes.push(...shell.filter(rootOf));
+      if(screen==="ActivityForm")await qmqzStore.shell(screen,nodes,state.profile,{data,edit,label,picture,nodeById,go});
+      else nodes.push(...shell.filter(rootOf));
       edit(nodes,6639,{active:true}); edit(nodes,1433,{active:true}); edit(nodes,7478,{active:true});
       const roots={SocialWindow:8074,FriendWindow:505,TalentWindow:8124,PrizeWindow:5647,UpgradeListWindow:6402,NewPromoteWindow:102,PromoteWindow:5852,NewBattleWindow:837,OfflineWindow:4333,LineWindow:6759,EquipWindow:4147,DepotWindow:3351,BarrackWindow:7145,QualifyingWindow:2386,BotLevelWindow:2818,BotRoomWindow:5478,FusionWindow:6692,ActivityForm:8393,MyCardWindow:8099};
       edit(nodes,roots[screen],{active:true});
@@ -237,21 +315,29 @@
         if (!rooms.some(r=>r.roomId===selectedRoom)) selectedRoom=rooms[0]?.roomId;
         const selected=rooms.find(r=>r.roomId===selectedRoom);
         const text=await data("strings");
+        const specials=(await data("offline-modes")).special;
+        const equipped=(state.profile?.equipment?.loadouts||[]).flatMap(set=>set.slots||[]);
+        const items=(await data("inventory")).items;
+        const eligible=limit=>limit<=2 || (limit===3 && equipped.some(s=>s.position===41)) ||
+          ([4,5].includes(limit) && equipped.some(s=>s.position===11 && items.find(i=>i.id===s.itemId)?.subType===(limit===4?16:12)));
+        function joinSelected(room) {
+          if(!room){notify(121);return;}
+          selectedRoom=room.roomId;
+          if(eligible(room.equiplimitid))command("original-join:"+room.roomId);
+          else openDialog("ConfirmJoin");
+        }
         const line=Number(state.line??0);
         label(nodes,2539, line===0 ? text[189] : line===1 ? "高手线" : line); label(nodes,2037,rooms.length); label(nodes,318,selected?.mapName);
         if(selected?.mapId) picture(nodes,6347,"map-"+selected.mapId+".png");
-        edit(nodes,2294,{action:()=> selectedRoom != null && command("original-join:"+selectedRoom)});
+        edit(nodes,2294,{action:()=>joinSelected(selected)});
         edit(nodes,6243,{action:()=>openDialog("ModeCreate")});
         edit(nodes,3114,{action:()=>openDialog("QuickMode")});
         const modes=await data("quick-games");
         label(nodes,7102,modes.find(m=>m.id===state.quickMode)?.name);
-        edit(nodes,2062,{action:async ()=>{
-          const items=(await data("inventory")).items;
-          const equipped=(state.profile?.equipment?.loadouts || []).flatMap(set=>set.slots || []);
-          const allowed=limit=>limit<=2 || (limit===3 && equipped.some(s=>s.position===41)) ||
-            ([4,5].includes(limit) && equipped.some(s=>s.position===11 && items.find(i=>i.id===s.itemId)?.subType===(limit===4?16:12)));
-          const available=rooms.find(r=>r.players<r.capacity && allowed(r.equiplimitid));
+        edit(nodes,2062,{action:()=>{
+          const available=rooms.find(r=>r.players<r.capacity && eligible(r.equiplimitid));
           if(available)command("original-join:"+available.roomId);
+          else notify(121);
         }});
         const rows=await data("BattleListItem");
         const highlight=await data("ShopHighlight");
@@ -261,9 +347,10 @@
         rooms.slice(page,page+visible).forEach((room,i)=>{
           const prefix="room"+i+"-";
           nodes.push(...clonePrefab(rows,prefix,grid.id,-i*96,{
-            1213:room.title,1270:room.mapName,1361:room.creator,1144:room.modeName,
+            1213:room.title,1270:room.mapName,1361:room.creator,1144:roomModeName(room,specials),
             1319:room.status===1?text[164]:text[165],1395:room.players+"/"+room.capacity
-          },{action:()=>{selectedRoom=room.roomId;render();},roomId:room.roomId,label:room.title}));
+          },{action:()=>{if(selectedRoom!==room.roomId){selectedRoom=room.roomId;render();}},
+            doubleClick:()=>joinSelected(room),roomId:room.roomId,label:room.title}));
           if(room.roomId===selectedRoom) nodes.push(...clonePrefab(highlight,prefix+"selected-",prefix+"1453",0,{}, {s:rows.find(n=>!n.parent).hit.slice(2)}));
         });
       } else if(screen==="NewBattleWindow") {
@@ -287,6 +374,7 @@
           nodes.push(...copy);
         });
       } else if(screen==="TableWindow") {
+        if(challengeRoom) await qmqzChallengePreparation.display(nodes,state,{data,edit,label,picture,command,render,notify});
         edit(nodes,5522,{action:()=>command("original-ready")});
         const room=state.room || {};
         const text=await data("strings");
@@ -295,10 +383,7 @@
         const single = [4, 8, 10, 12].includes(room.gameMode);
         edit(nodes,7869,{active:!single});
         edit(nodes,6404,{active:single});
-        const special = room.equiplimitid && room.gameMode !== 13
-          ? (await data("offline-modes")).special.find(rule => rule.id === room.equiplimitid)
-          : null;
-        label(nodes,4220,special?.name || room.modeName);
+        label(nodes,4220,roomModeName(room,(await data("offline-modes")).special));
         // Local practice rooms have no password (CurrentRoom.Password, Concept 52).
         label(nodes,1127,"****");
         if(room.mapId) picture(nodes,5392,"map-"+room.mapId+".png");
@@ -515,25 +600,19 @@
       edit(overlay,root.modeCreate.pveObj,{action:()=>command("original-room-create:12")});
       nodes.push(...overlay);
     }
+    if(dialog==="ConfirmJoin") {
+      const overlay=(await data(dialog)).filter(n=>!nodeById(nodes,n.id)).map(n=>({...n,overlay:true}));
+      edit(overlay,3157,{active:true});
+      edit(overlay,6773,{action:closeDialog});
+      edit(overlay,614,{action:()=>{dialog=false;command("original-join:"+selectedRoom);render();}});
+      nodes.push(...overlay);
+    }
     if(dialog==="GameOptions" || dialog==="ModeSelectNew") {
       const overlay=(await data(dialog)).filter(n=>!nodeById(nodes,n.id)).map(n=>({...n,overlay:true}));
       edit(overlay,dialog==="GameOptions" ? 122 : 1519,{active:true});
       nodes.push(...overlay);
       if(dialog==="GameOptions") {
-        edit(nodes,2282,{action:closeDialog});
-        const content=nodeById(nodes,4439);
-        content.p=[content.p[0],content.p[1]+dialogScroll];
-        for(const n of overlay.filter(n=>n.ComplexSlider)) {
-          const {style,slider,btnMinus,btnPlus}=n.ComplexSlider;
-          const axis=["music","effects","x","y","pad"][style];
-          const value=style<2?window.qmqzVolume.get(axis):axisValue(axis);
-          const track=nodeById(nodes,slider), dims=track.hit;
-          const thumb=nodeById(nodes,track.UISlider.thumb), fg=nodeById(nodes,track.UISlider.foreground);
-          thumb.p=[dims[2]*value,thumb.p[1]]; fg.s=[293*value,fg.s[1]];
-          edit(nodes,btnMinus,{action:()=>setSlider(axis,value-.02),axis:axis+"-minus"});
-          edit(nodes,btnPlus,{action:()=>setSlider(axis,value+.02),axis:axis+"-plus"});
-          edit(nodes,slider,{slide:axis,value});
-        }
+        configureOptions(nodes);
       } else {
         const config=await data("room-modes");
         const groups=await data("ModeFamilyItem"), modes=await data("ModeListItem");
@@ -544,8 +623,9 @@
         const active=list.find(f=>f.id===family)||list[0];
         const group=offline?active.mode_offline:active.mode;
         const entries=group._items.slice(0,group._size);
-        const specials=offline?(await data("offline-modes")).special:[];
-        if(offline)entries.push(...active.special_offline._items.slice(0,active.special_offline._size).map(id=>-id));
+        const specials=(await data("offline-modes")).special;
+        const limits=offline?active.special_offline:active.special;
+        entries.push(...limits._items.slice(0,limits._size).map(id=>-id));
         entries.forEach((id,i)=>{
           const mode=id<0?specials.find(m=>m.id===-id):config.modes.find(m=>m.id===id);
           if(!mode)return;
@@ -556,9 +636,9 @@
         });
       }
     }
-    if(["GachaListDialog","PrizeInfo","QuickMode","Annoncement","BulletPurchase","ModeCreate","ConfirmBuy","PackItem","StoreItemDetails","GoRecharge","StoreReceipt","GachaPrize","OpenRoulette","RouletteHelp","WheelPrize","WheelDetail","ExchangeDialog","FirstRechargeInfo","ResearchPointsMaker","SplinterMaker","UpgradeConfirm","WeekReceipt","WeekUpgrade"].includes(dialog)) {
+    if(["GachaListDialog","PrizeInfo","QuickMode","Annoncement","BulletPurchase","ModeCreate","ModeSelectNew","ConfirmJoin","ConfirmBuy","PackItem","StoreItemDetails","GoRecharge","StoreReceipt","GachaPrize","OpenRoulette","RouletteHelp","WheelPrize","WheelDetail","ExchangeDialog","FirstRechargeInfo","ResearchPointsMaker","SplinterMaker","UpgradeConfirm","WeekReceipt","WeekUpgrade"].includes(dialog)) {
       const dimmer=(await data("UIDimmer")).filter(n=>!nodeById(nodes,n.id)).map(n=>({...n,overlay:true}));
-      edit(dimmer,8896,{modalBackground:true,dismissBackground:["QuickMode","PackItem","StoreItemDetails"].includes(dialog)?closeDialog:null});
+      edit(dimmer,8896,{modalBackground:true,dismissBackground:["QuickMode","ModeSelectNew","PackItem","StoreItemDetails"].includes(dialog)?closeDialog:null});
       if(dialog==="GachaPrize"){
         const bg=nodeById(dimmer,8896);
         bg.widget={...bg.widget,color:[255,255,255,219.140625]};
@@ -686,7 +766,7 @@
   async function render() {
     if(dialog!=="RewardDialog")qmqzRewardMotion.reset();
     const token=++revision;
-    const screen = state.mode==="match" ? "" : state.screen==="MainUI" ?
+    const screen = state.mode==="match" ? (dialog==="GameOptions" || dialog==="Layout" ? "FightSettings" : "") : state.screen==="MainUI" ?
       (localWindow||(state.rankWaiting?"QualifyingWindow":"")||{RoomWindow:"TableWindow",TableWindow:"TableWindow",LobbyWindow:"LobbyWindow",LineWindow:"LineWindow",BotLevelWindow:"BotLevelWindow",OfflineWindow:"OfflineWindow"}[state.window]||"MainUI") :
       state.screen==="CreateCharacter" ? "CreateCharacter" : "InitUI";
     switcher.hidden=screen!=="InitUI" || !entryRoles || entryRoles.roles.length<2;
@@ -707,6 +787,7 @@
       const height=designHeight;
       const scale=Math.min(menu.parentElement.clientHeight/height,menu.parentElement.clientWidth/width);
       currentScale=scale;
+      if(dialog==="Layout")qmqzTouchLayout.arrange(nodes,width,height,scale);
       const posterHit=nodeById(nodes,"poster-enter");
       if(posterHit) posterHit.hit=[0,0,width,height];
       for(const n of nodes)qmqzButtonFeedback.defaults(n);
@@ -833,8 +914,9 @@
 
         } else if(n.slide) {
           const range=document.createElement("input"), g=world.get(n.id), [x,y,w,h]=n.hit;
-          range.type="range";range.min=0;range.max=1;range.step=.001;range.value=n.value;range.className="ngui-range";
-          range.dataset.axis=n.slide;range.setAttribute("aria-label",({music:"音乐音量",effects:"音效音量",x:"X轴敏感度",y:"Y轴敏感度",pad:"手柄敏感度"})[n.slide]);
+          range.type="range";range.min=0;range.max=1;range.step=n.slide==="assist" ? .01 : .001;range.value=n.value;range.className="ngui-range";
+          range.dataset.axis=n.slide;range.setAttribute("aria-label",({music:"音乐音量",effects:"音效音量",x:"X轴敏感度",y:"Y轴敏感度",pad:"手柄敏感度",assist:"辅助瞄准强度"})[n.slide]);
+          if(n.slide==="assist")range.setAttribute("aria-valuetext",Math.round(n.value*100)+"%");
           box(range,g.x+x-w/2,-g.y-y-h/2,w,h);
           range.oninput=()=>{
             const value=range.valueAsNumber;
@@ -842,13 +924,19 @@
             const fill=drawings.querySelector('[data-source-id="'+n.UISlider.foreground+'"]');
             if(thumb) thumb.style.translate=(w*(value-n.value))+"px 0";
             if(fill) fill.style.width=(293*value)+"px";
+            if(n.slide==="assist")range.setAttribute("aria-valuetext",Math.round(value*100)+"%");
             if(n.slide==="music" || n.slide==="effects") window.qmqzVolume.set(n.slide,value);
           };
           range.onchange=()=>setSlider(n.slide,range.valueAsNumber);append(range,n);
         } else if(n.action&&n.hit&&(!dialog||world.get(n.id).overlay)) {
           const b=document.createElement("button"), g=world.get(n.id), [cx,cy,w,h]=n.hit;
           b.type="button";b.className="ngui-hit";b.dataset.object=n.name;
+          if(n.layoutKey){
+            b.dataset.layoutKey=n.layoutKey;b.dataset.layoutBoard=JSON.stringify(n.layoutBoard);
+            b.style.touchAction="none";
+          }
           b.setAttribute("aria-label",n.label||visible.find(c=>c.parent===n.id&&c.widget?.text)?.widget.text||n.name);
+          if(n.pressed!==undefined)b.setAttribute("aria-pressed",String(n.pressed));
           for(const key of ["actorId","itemId","slot","levelId","shopId"]) if(n[key]!==undefined)b.dataset[key]=n[key];
           if(n.line!==undefined)b.dataset.line=n.line;
           if(n.axis)b.dataset.axis=n.axis;
@@ -863,6 +951,7 @@
           append(b,n);
           qmqzButtonFeedback.bind(b,n,{motions,art:buttonArt,resource,tint:spriteTint,curve:buttonCurve,scroll:scrollTarget,
             scrolled:()=>lastTouchScroll && performance.now()-lastTouchScroll<300});
+          if(n.doubleClick)b.ondblclick=n.doubleClick;
         }
       }
       stage.style.transform="scale("+scale+")";
@@ -908,7 +997,7 @@
       window.qmqzOfflineModes.rank(state.rankType===1?1:0);localWindow="QualifyingWindow";dialog="RankMatch";
     } else if(!state.rankWaiting && dialog==="RankMatch")dialog=false;
     if(["RewardDialog","RewardRobotDialog","ScoreDialog","LevelUp","LevelUpDialog"].includes(state.dialog) && prev.dialog!==state.dialog){dialog=state.dialog==="LevelUpDialog"?"LevelUp":state.dialog==="RewardDialog" && state.result?.gameMode===12?"PvEReward":state.dialog;dialogScroll=0;resultTab="record";}
-    const key=JSON.stringify([state.booted,state.mode,state.screen,state.window,state.line,state.rooms,state.room,state.profile,state.loginResult,state.createResult,state.sensitivityX,state.sensitivityY,state.sensitivityPad,state.rankType,state.rankWaiting,state.lines,state.dialog,state.result,state.profileRevision]);
+    const key=JSON.stringify([state.booted,state.mode,state.screen,state.window,state.line,state.rooms,state.room,state.profile,state.loginResult,state.createResult,state.sensitivityX,state.sensitivityY,state.sensitivityPad,state.aimAssistEnabled,state.aimAssistStrength,state.rankType,state.rankWaiting,state.lines,state.dialog,state.result,state.profileRevision]);
     if(key!==stateKey){stateKey=key;render();}
   });
   function scrollTarget(el,event) {
@@ -953,7 +1042,7 @@
     const max=key==="lines"?Math.max(0,(state.lines?.length||0)*160-915):
       key==="rooms"?Math.max(0,(state.rooms?.length||0)-4)*96:
       key==="quick"?110:key==="result"?Math.max(0,(state.result?.fighters?.length||0)*60-300):
-      key==="robotResult"?robotResultScrollMax:500;
+      key==="robotResult"?robotResultScrollMax:key==="options"?620:500;
     const clamped=Math.max(0,Math.min(max,value));
     if(key==="lines")lineOffset=clamped;
     else if(key==="rooms")page=Math.round(clamped/96);
@@ -1015,6 +1104,8 @@
     notify(success?4:5);
   });
   window.addEventListener("resize",render);
+  qmqzTouchLayout.listen(menu,render);
+  window.addEventListener("qmqz-open-fight-settings",()=>{if(state.mode==="match")openDialog("GameOptions");});
   window.qmqzUiDensity.media.addEventListener("change",render);
   window.addEventListener("qmqz-ready",render);
   if(window.qmqzUnity) render();

@@ -94,5 +94,5 @@
       qmqzUpgrade.item(part,h.go,returnRoute(h));
     }});
   }
-  window.qmqzStoreItems={open,display,origin,previous};
+  window.qmqzStoreItems={open,display,origin,previous,stars};
 })();

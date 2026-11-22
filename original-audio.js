@@ -18,10 +18,22 @@
       localStorage.setItem("QMQZ.volume." + channel, String(levels[channel]));
     }
   };
-  let context, catalog, map = 0, generation = 0, lastStep = -Infinity;
+  let context, resuming, catalog, map = 0, generation = 0, lastStep = -Infinity;
   let inLobby = false, lobbyVisit = 0, lobbyStarted = false, lobbyVoice;
   let previousAnnouncement = Promise.resolve();
-  let announcementEnds = 0;
+  const scheduledVoices = new Map(), streaks = new Set();
+  function resetStreak(owner) {
+    for (const voice of streaks) {
+      if (owner >= 0 && voice.owner !== owner) continue;
+      voice.cancel();
+      if (voice.source) {
+        scheduledVoices.delete(voice.source);
+        voice.source.stop();
+      }
+      streaks.delete(voice);
+    }
+    window.dispatchEvent(new CustomEvent("qmqz-streak-reset",{detail:owner}));
+  }
   const awaitingGesture = new Set();
   function wakePending() {
     for (const wake of awaitingGesture) wake();
@@ -56,7 +68,8 @@
       }
     }
     const ready = () => { if (context.state === "running") { wakePending(); startLobby(); } };
-    if (context.state === "suspended" || context.state === "interrupted") context.resume().then(ready).catch(() => {});
+    if (context.state === "suspended" || context.state === "interrupted")
+      resuming ||= context.resume().then(ready).catch(() => {}).finally(() => { resuming = null; });
     else ready();
   }
   for (const event of ["pointerdown","touchend","keydown"]) window.addEventListener(event, unlock, {capture:true, passive:true});
@@ -83,20 +96,26 @@
     generation++;
     wakePending();
     previousAnnouncement = Promise.resolve();
-    announcementEnds = 0;
+    resetStreak(-1);
+    scheduledVoices.clear();
     map = 0;
     lastStep = -Infinity;
     for (const source of playing) source.stop();
     playing.clear();
     worldVoices.clear();
   }
-  async function play(action, id, path, volume, pan, previous) {
+  async function play(action, id, path, volume, pan, previous, streak) {
     if (action === "stop") { stop(); return; }
     if (action === "map") { stop(); map = id; }
     const version = generation, visit = lobbyVisit;
-    const stale = () => action === "lobby" ? !inLobby || visit !== lobbyVisit : generation !== version;
+    const stale = () => action === "lobby" ? !inLobby || visit !== lobbyVisit :
+      generation !== version || (streak && !streaks.has(streak));
+    if (resuming && action === "clip") {
+      await resuming;
+      if (stale()) return;
+    }
     if (context?.state !== "running") {
-      if (!["map","announce","event"].includes(action) || !(window.AudioContext || window.webkitAudioContext)) return;
+      if (!["map","announce","event","prepare"].includes(action) || !(window.AudioContext || window.webkitAudioContext)) return;
       await new Promise(resolve => awaitingGesture.add(resolve));
       if (stale() || context?.state !== "running") return;
     }
@@ -111,9 +130,9 @@
       lastStep = context.currentTime;
     }
     const spatial = action === "world";
-    const key = row?.key || (action === "clip" || action === "announce" || spatial ? path.toLowerCase() : "");
+    const key = row?.key || (["clip","announce","prepare"].includes(action) || spatial ? path.toLowerCase() : "");
     const entry = library.clips[key];
-    const foley = spatial && key.startsWith("foley/");
+    const foley = key.startsWith("foley/");
     if (!entry && !foley) return;
     const buffer = await recent(decoded, key, 24, async () => {
       if (foley) return context.decodeAudioData(await resource(key + ".wav", "arrayBuffer"));
@@ -121,6 +140,7 @@
       const bytes = await recent(banks, bank, 3, () => resource(bank + ".bank","arrayBuffer"));
       return context.decodeAudioData(bytes.slice(offset, offset + size));
     });
+    if (action === "prepare") return;
     if (previous) await previous;
     if (stale() || (spatial && worldVoices.size >= 14)) return;
     const source = context.createBufferSource(), gain = context.createGain();
@@ -132,25 +152,38 @@
     if (panner) { panner.pan.value = pan; gain.connect(panner).connect(bus); }
     else gain.connect(bus);
     if (spatial) worldVoices.add(source);
-    source.onended = () => { playing.delete(source); worldVoices.delete(source); source.disconnect(); gain.disconnect(); panner?.disconnect(); };
+    source.onended = () => {
+      playing.delete(source); worldVoices.delete(source); scheduledVoices.delete(source);
+      if (streak) streaks.delete(streak);
+      source.disconnect(); gain.disconnect(); panner?.disconnect();
+    };
     if (action === "lobby") {
       source.loop = Boolean(row.loop);
       lobbyVoice = source;
     } else playing.add(source);
     let when = context.currentTime + (row?.delay || 0);
     if (previous && key.startsWith("sound/voice/")) {
-      when = Math.max(when, announcementEnds);
-      announcementEnds = when + buffer.duration;
+      for (const end of scheduledVoices.values()) when = Math.max(when,end);
+      scheduledVoices.set(source,when+buffer.duration);
     }
+    if (streak) streak.source=source;
     source.start(when);
   }
   window.qmqzAudio = (action, id = 0, path = "", volume = 1, pan = 0) => {
+    if (action === "reset-streak") { resetStreak(id); return; }
     // Cold decoding may finish out of order. Keep the original dispatch order for announcements,
     // while shots, footsteps and impacts keep their independent playback timing.
     const ordered = action === "announce" || (action === "event" && id >= 1204 && id <= 1206);
     const previous = ordered ? previousAnnouncement : null;
-    const started = play(action, id, path, volume, pan, previous).catch(error => console.warn(error));
-    if (ordered) previousAnnouncement = Promise.all([previous,started]).then(() => {});
+    const streak = action==="announce" && /\/m_en_killcount_kill\d+$/i.test(path) ? {owner:id} : null;
+    let cancelled;
+    if (streak) {
+      cancelled=new Promise(resolve=>{streak.cancel=resolve;});
+      streaks.add(streak);
+    }
+    const started = play(action, id, path, volume, pan, previous, streak).catch(error => console.warn(error));
+    if (streak) started.then(()=>{if(!streak.source)streaks.delete(streak);});
+    if (ordered) previousAnnouncement = Promise.all([previous,streak ? Promise.race([started,cancelled]) : started]).then(() => {});
     return started;
   };
 })();

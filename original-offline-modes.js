@@ -57,7 +57,7 @@
       edit(nodes,4584,{action:()=>{
         selectedLevel=0;
         const first=modes.maps.find(m=>m.status===1);
-        custom={mapId:first.id,gameMode:1,equiplimitid:0,side:1,autoAim:false,police:[null],terrorists:[]};
+        custom={mapId:first.id,gameMode:1,equiplimitid:0,side:1,autoAim:true,police:[null],terrorists:[]};
         go("BotRoomWindow");
       }});
       const rows=await data("LevelListItem"),ref=rows.find(n=>n.RobotLevelListItem).RobotLevelListItem;

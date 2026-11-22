@@ -1,11 +1,12 @@
 /* Keyboard and relative mouse input for the Web player. Menus keep the system cursor. */
-window.createDesktopControls = function (canvas, send, redraw) {
+window.createDesktopControls = function (canvas, send, redraw, onHudControl) {
   "use strict";
   const keys = new Set();
   const walking = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
-  const actions = {Digit1:"weapon:11", Digit2:"weapon:12", Digit3:"weapon:50", Digit4:"weapon:41",
+  const actions = {Digit1:"weapon:11", Digit2:"weapon:12", Digit3:"weapon:50", Digit4:"weapon:41", Digit5:"weapon:42",
     KeyQ:"previous-weapon", KeyR:"reload", KeyB:"toggle-ammo", KeyC:"crouch", Space:"jump", KeyV:"melee", KeyF:"ability"};
-  let desktop = matchMedia("(hover:hover) and (pointer:fine)").matches;
+  const mobileTouch=navigator.maxTouchPoints>0 && (navigator.userAgentData?.mobile || /Android|iPhone|iPad|iPod/.test(navigator.userAgent));
+  let desktop = !mobileTouch && matchMedia("(hover:hover) and (pointer:fine)").matches;
   let enabled = false, firing = false, aiming = false, using = "", dx = 0, dy = 0, frame = 0;
   let pendingLock = false, lastWheel = -Infinity, state = {};
   const locked = () => document.pointerLockElement === canvas;
@@ -34,7 +35,7 @@ window.createDesktopControls = function (canvas, send, redraw) {
   }
   function stop() {
     if (keys.size) send("move:0,0");
-    if (firing) send("fireUp");
+    if (firing) send("mouse-fire-cancel");
     if (aiming) send("mouse-aim-off");
     if (using) send(using + "-up");
     keys.clear();
@@ -69,32 +70,37 @@ window.createDesktopControls = function (canvas, send, redraw) {
   function handled(e) { e.preventDefault(); e.stopImmediatePropagation(); }
   function pointer(e) {
     if (e.pointerType !== "mouse") {
-      if (e.type === "pointerdown" && e.target === canvas) { device(false); canvas.focus({preventScroll:true}); if (locked()) unlock(); }
+      if (e.type === "pointerdown") {
+        device(false);
+        if (e.target===canvas) { canvas.focus({preventScroll:true}); if (locked()) unlock(); }
+      }
       return;
     }
     if (!enabled || (!locked() && e.target !== canvas)) return;
     if (e.type === "pointerdown") {
       if (e.button !== 0 && e.button !== 2) return;
       device(true);
-      handled(e);
+      if (!locked() && e.button === 0 && onHudControl(e)) return;
       if (!locked()) {
+        handled(e);
         if (e.button === 0) requestControl();
         return;
       }
-      if (e.button === 0 && !firing) { firing = true; send("fireDown"); }
-      if (e.button === 2 && !aiming && (state.weaponSlot===11 || state.weaponSlot===12)) {
-        aiming = true; send("mouse-aim-on");
-      }
+      e.stopImmediatePropagation();
     } else if (locked()) {
-      if (e.button === 0 && firing) { firing = false; send("fireUp"); }
-      if (e.button === 2 && aiming) { aiming = false; send("mouse-aim-off"); }
-      handled(e);
+      e.stopImmediatePropagation();
     }
   }
   function move(e) {
-    if (!enabled || !locked()) return;
-    dx += e.movementX;
-    dy += e.movementY;
+    if (!enabled || !locked() || e.pointerType!=="mouse") return;
+    // Some pointer-lock transitions report the cursor warp from the previous desktop position.
+    // Inspect individual hardware samples when available. Keep valid travel on the other axis.
+    const samples=e.getCoalescedEvents?.();
+    const maxX=Math.max(128,canvas.clientWidth*.45), maxY=Math.max(96,canvas.clientHeight*.45);
+    for(const sample of samples?.length?samples:[e]){
+      if(Number.isFinite(sample.movementX) && Math.abs(sample.movementX)<maxX)dx+=sample.movementX;
+      if(Number.isFinite(sample.movementY) && Math.abs(sample.movementY)<maxY)dy+=sample.movementY;
+    }
     if (!frame) frame = requestAnimationFrame(() => {
       frame = 0;
       if (dx || dy) send("mouse-look:" + dx.toFixed(2) + "," + dy.toFixed(2));
@@ -125,7 +131,19 @@ window.createDesktopControls = function (canvas, send, redraw) {
   }
   window.addEventListener("pointerdown", pointer, {capture:true, passive:false});
   window.addEventListener("pointerup", pointer, {capture:true, passive:false});
-  window.addEventListener("mousemove", move, true);
+  window.addEventListener("pointercancel", e=>{if(e.pointerType==="mouse")stop();}, true);
+  // Browsers emit pointerdown/up only for the first/last button in a chord.
+  window.addEventListener("mousedown",e=>{
+    if(enabled && locked() && ((e.button===0 && !firing) || (e.button===2 && !aiming))){
+      if(e.button===0){firing=true;send("mouse-fire-down");}
+      else if(state.weaponSlot===11 || state.weaponSlot===12){aiming=true;send("mouse-aim-on");}
+    }
+  },true);
+  window.addEventListener("mouseup",e=>{
+    if(e.button===0 && firing){firing=false;send("mouse-fire-up");}
+    if(e.button===2 && aiming){aiming=false;send("mouse-aim-off");}
+  },true);
+  window.addEventListener("pointermove", move, true);
   window.addEventListener("keydown", key, true);
   window.addEventListener("keyup", key, true);
   window.addEventListener("wheel", e => {

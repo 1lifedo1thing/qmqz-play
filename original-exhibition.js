@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  let quotedCount=0, actors=[], weapons=[], actorIndex=0, weaponIndex=0, yaw=15, loaded=false, redraw=null;
+  let quotedCount=0, restoreTab=-1, actors=[], weapons=[], actorIndex=0, weaponIndex=0, yaw=15, loaded=false, redraw=null;
   let source="EquipWindow", equipmentState=null, selectedSlot=0, tryItem=null, page=0, pending=false, saveError=false, appearance="";
   const slots=[
     {pos:101,root:4810,grid:6476,title:"头部饰品"},{pos:104,root:7131,grid:4786,title:"面部饰品"},
@@ -20,6 +20,7 @@
     qmqzUnity.SendMessage("WebClient","Exhibit",JSON.stringify(request));
   }
   function resetSlot() { selectedSlot=0;tryItem=null;page=0;pending=false;saveError=false;appearance=""; }
+  function fittingYaw(pos) { return pos===102 || pos===103 ? 165 : 15; }
   function change(actor,weapon,h) {
     actorIndex=actor;weaponIndex=weapon;yaw=15;loaded=false;resetSlot();show(true);h.render();
   }
@@ -32,7 +33,7 @@
     if(index<0 || !weapon)return;
     source="RolePurchase";
     actors=available;weapons=[weapon];actorIndex=index;weaponIndex=0;
-    yaw=15;loaded=false;redraw=h.render;equipmentState=eq;resetSlot();selectedSlot=pos;
+    yaw=fittingYaw(pos);loaded=false;redraw=h.render;equipmentState=eq;resetSlot();selectedSlot=pos;
     h.go("Exhibition");show(true);
   }
   function shopItem(item,catalog,eq,h,back="StoreWindow") {
@@ -43,7 +44,7 @@
     if(!available.length||!weapon){h.notify(667);return;}
     source=back;actors=available;weapons=[weapon];actorIndex=0;weaponIndex=0;
     yaw=15;loaded=false;redraw=h.redraw;equipmentState=eq;resetSlot();
-    if(accessory){selectedSlot=item.equipPos;tryItem=item.id;}
+    if(accessory){selectedSlot=item.equipPos;tryItem=item.id;yaw=fittingYaw(selectedSlot);}
     h.go("Exhibition");show(true);
   }
   window.addEventListener("qmqz-exhibit-ready",e=>{
@@ -96,7 +97,7 @@
     const eq=state.profile.equipment, count=eq.loadouts.length;
     h.edit(nodes,63,{label:"购买档位",action:()=>{
       if(count>=10){h.notify(350);return;}
-      quotedCount=count;h.openDialog("GetEquipBar");
+      quotedCount=count;restoreTab=-1;h.openDialog("GetEquipBar");
     }});
     h.edit(nodes,1700,{label:"预览装备",action:()=>{
       const byId=new Map(catalog.items.map(item=>[item.id,item]));
@@ -109,12 +110,25 @@
       actorIndex=0;weaponIndex=0;yaw=15;loaded=false;redraw=h.render;equipmentState=eq;resetSlot();
       h.go("Exhibition");show(true);
     }});
+    if(eq.loadouts[tab]?.canRestoreDefaults){
+      h.label(nodes,4087,"恢复默认");
+      h.edit(nodes,1700,{label:"恢复默认装备",action:()=>{restoreTab=tab;h.openDialog("GetEquipBar");}});
+    }
     if(h.dialog!=="GetEquipBar")return;
     const [layout,prices,text]=await Promise.all([h.data("GetEquipBar"),h.data("equip-set-prices"),h.data("strings")]);
     const panel=layout.filter(n=>!h.nodeById(nodes,n.id)).map(n=>({...n,overlay:true}));
     const cost=prices.find(r=>r.id===quotedCount+1)?.gem;
     h.edit(panel,6722,{active:true});h.label(panel,6984,text[379].replace("{0}",cost));
     h.edit(panel,1282,{action:h.closeDialog});
+    if(restoreTab>=0){
+      h.label(panel,6577,"恢复默认装备");
+      h.label(panel,6984,"为背包 "+(restoreTab+1)+" 补齐默认装备？已有装备会保留。");
+      h.edit(panel,2270,{action:()=>{
+        const index=restoreTab;restoreTab=-1;h.closeDialog();
+        h.command("original-menu:"+JSON.stringify({view:"restore-loadout",fields:{tab:index}}));
+      }});
+      nodes.push(...panel);return;
+    }
     h.edit(panel,2270,{action:()=>{
       h.closeDialog();
       if(count!==quotedCount||cost===undefined)return;
@@ -145,7 +159,8 @@
     for(const slot of slots) {
       h.edit(nodes,slot.root,{label:slot.title,slot:slot.pos,hit:[0,0,148,140],action:()=>{
         if(pending)return;
-        selectedSlot=slot.pos===selectedSlot?0:slot.pos;tryItem=null;page=0;saveError=false;show(true);h.render();
+        selectedSlot=slot.pos===selectedSlot?0:slot.pos;tryItem=null;page=0;saveError=false;
+        yaw=fittingYaw(selectedSlot);show();show(true);h.render();
       }});
       const id=slot.pos===selectedSlot && tryItem!==null?tryItem:saved.find(s=>s.pos===slot.pos)?.itemId;
       const item=catalog.items.find(i=>i.id===id);

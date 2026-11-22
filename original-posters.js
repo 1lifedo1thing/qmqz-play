@@ -2,7 +2,7 @@
 (() => {
   "use strict";
   let index=0, interval, lastChange=-Infinity, previous=0, direction=1, press=null, suppressClick=false, art, hit, style, config;
-  let selectedGift, goalId, selectedHead, medalId, rankId, cardTab="archive", rankGroup=1, vipLevel=0, returnTo="MainUI";
+  let selectedGift, giftClock={}, goalId, selectedHead, medalId, rankId, cardTab="archive", rankGroup=1, vipLevel=0, returnTo="MainUI";
   let offset=0, limit=0, panel="", busy=false, fusionMessage="", picks=new Map();
   const clearScroll=()=>{offset=0;limit=0;panel="";};
 
@@ -350,7 +350,9 @@
       edit(nodes,icon,{active:!!row});
       if(row) {
         picture(nodes,icon,row.icon);
-        edit(nodes,slot,{action:()=>{selectedGift=row.id;render();},label:row.name});
+        edit(nodes,slot,{action:()=>{selectedGift=row.id;giftClock={};render();},label:row.name});
+        if(row.id===selected.id && !h.dialog)
+          qmqzMenuFX.particle(nodes,await data("week-particles"),"lingqu01",slot,giftClock,0,{z:-1,loop:true});
       }
     }
     label(nodes,2984,selected.name);label(nodes,7728,selected.price);
@@ -381,7 +383,7 @@
     const [name,parameter]=route.split("|");
     clearScroll();picks.clear();goalId=null;fusionMessage="";cardTab="archive";rankGroup=1;rankId=null;medalId=null;
     returnTo=route.startsWith("ActivityForm|")? "MainUI":source;
-    if(name==="ActivityForm")selectedGift=Number(parameter);
+    if(name==="ActivityForm"){selectedGift=Number(parameter);giftClock={};}
     go(name);
   }
   window.qmqzPosters={attach,open,display,destination,rechargeVip,scrollPanel:id=>!!panel&&panel===id,

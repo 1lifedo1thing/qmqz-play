@@ -123,6 +123,14 @@
     const src=record.originalData||{};
     return {gifts:src.gifts||[],research_talents:src.research_talents||{}};
   };
+  window.qmqzReadChallengeRoom = async roleId => {
+    const db=await openDatabase();
+    const record=await read(db.transaction("roles").objectStore("roles").get(roleId-100000));
+    if(!record || record.account!==currentAccount) throw Error("挑战房角色已切换");
+    const info=record.originalData||{}, day=new Date(), daily=info.pve_daily_cards;
+    const today=[day.getFullYear(),String(day.getMonth()+1).padStart(2,"0"),String(day.getDate()).padStart(2,"0")].join("-");
+    return {vip:info.vipstatus||0, remaining:daily?.day===today?daily.left:3};
+  };
   window.qmqzReadPosterRole = async roleId => {
     const db=await openDatabase();
     const record=await read(db.transaction("roles").objectStore("roles").get(roleId-100000));
@@ -141,7 +149,10 @@
 
   let presenceRole=0,releasePresence;
   const socialBus=new BroadcastChannel("qmqz-social-local");
-  socialBus.onmessage=()=>window.dispatchEvent(new Event("qmqz-social-changed"));
+  socialBus.onmessage=({data})=>{
+    if(data.wallet && data.roleid===presenceRole)window.qmqzProfileCommand("social-wallet","{}");
+    window.dispatchEvent(new Event("qmqz-social-changed"));
+  };
   function setPresence(id){
     if(id===presenceRole)return;
     releasePresence?.();releasePresence=undefined;presenceRole=id;
@@ -156,8 +167,13 @@
   window.addEventListener("qmqz-state",({detail})=>setPresence(detail?.profile?.roleid||0));
   window.addEventListener("pagehide",()=>setPresence(0));
   window.addEventListener("pageshow",()=>setPresence(window.qmqzLastState?.profile?.roleid||0));
-  window.qmqzLocalSocial=async (roleid,op={})=>navigator.locks.request("qmqz-social-local",async()=>{
-    const account=currentAccount, db=await openDatabase(),key="local-social-v1";
+  window.qmqzLocalSocial=(roleid,op={})=>{
+    const account=currentAccount, paid=op.id===851970 && op.fields?.channel===1;
+    const save=()=>localSocial(account,roleid,op);
+    return navigator.locks.request("qmqz-social-local",()=>paid?navigator.locks.request("qmqz-role-"+account,save):save());
+  };
+  async function localSocial(account,roleid,op){
+    const db=await openDatabase(),key="local-social-v1";
     const tx=db.transaction(["roles","matchReceipts"]),roles=tx.objectStore("roles");
     const [keys,players,social,locks]=await Promise.all([read(roles.getAllKeys()),read(roles.getAll()),
       read(tx.objectStore("matchReceipts").get(key)),navigator.locks.query()]);
@@ -166,12 +182,20 @@
     const own=players.findIndex(r=>r.account===account);
     if(currentAccount!==account || directory[own]?.roleid!==roleid)throw Error("角色已切换");
     const online=locks.held.filter(r=>r.name.startsWith("qmqz-presence-")).map(r=>Number(r.name.slice(14)));
-    const result=await runRules({action:"local-social",roleid,op,directory,online,social});
-    const write=db.transaction("matchReceipts","readwrite");write.objectStore("matchReceipts").put(result.social,key);
+    const result=await runRules({action:"local-social",roleid,op,directory,online,social,gold:players[own].gold});
+    if(currentAccount!==account)throw Error("角色已切换");
+    const spent=result.speaker?.spent;
+    const write=db.transaction(spent?["roles","matchReceipts"]:"matchReceipts","readwrite");
+    if(spent){
+      players[own].gold-=spent;
+      write.objectStore("roles").put(players[own],keys[own]);
+    }
+    write.objectStore("matchReceipts").put(result.social,key);
     await new Promise((ok,no)=>{write.oncomplete=ok;write.onabort=()=>no(write.error);});
-    if(op.id)socialBus.postMessage({roleid});
-    return {receipts:result.receipts,history:result.history,chatOptions:result.chatOptions,directory:directory.map(({publicData,...r})=>({...r,vip:publicData.vipstatus||0}))};
-  });
+    if(op.id)socialBus.postMessage({roleid,wallet:!!spent});
+    if(spent)window.qmqzProfileCommand("social-wallet","{}");
+    return {receipts:result.receipts,history:result.history,chatOptions:result.chatOptions,speaker:result.speaker,directory:directory.map(({publicData,...r})=>({...r,vip:publicData.vipstatus||0}))};
+  }
 
   async function profile(db, account, action = "state", fields = {}, reply = {}) {
     // Another tab may be using this character while the original rules run in the worker.
@@ -180,14 +204,26 @@
       const [role,id] = await Promise.all([read(index.get(account)),read(index.getKey(account))]);
       if (!role) return null;
       const snapshot = publicRole(role,id);
+      if(action==="social-wallet")return snapshot;
       if (action === "state" && role.originalData && role.rankWaitingType >= 0) action = "rank-cancel";
       // Derive newly projected equipment fields from the original save on its first read.
       if (action === "state" && role.originalData?.web_full_unlock_version >= 2 && role.equipment?.loadouts?.length &&
           Array.isArray(role.equipment.subjoins) && Number.isInteger(role.talentHp) &&
-          role.equipment.loadouts.every(group => Number.isInteger(group.star) &&
+          role.equipment.loadouts.every(group => Number.isInteger(group.star) && typeof group.canRestoreDefaults==="boolean" &&
             group.slots?.every(slot=>slot && slot.itemId===slot.effectiveItemId))) return snapshot;
       const receiptKey = [id, fields.matchId || ""];
       const reviveKey = [...receiptKey, "challenge-revives"];
+      const preparationKey = [...receiptKey, "challenge-preparation"];
+      if (action === "challenge-start") {
+        if (!fields.matchId) return snapshot;
+        const receipts = db.transaction("matchReceipts").objectStore("matchReceipts");
+        const [prior, settled] = await Promise.all([read(receipts.get(preparationKey)),read(receipts.get(receiptKey))]);
+        if (settled) return snapshot;
+        if (prior) {
+          if (prior.roomId===fields.roomId && prior.ruleId===fields.ruleId) reply.preparation=prior.preparation;
+          return snapshot;
+        }
+      }
       const ammoKey = [...receiptKey,"paid-ammo"];
       if(action==="paid-shot"){
         if(!fields.matchId || !Number.isSafeInteger(fields.shot) || fields.shot<1)return snapshot;
@@ -221,6 +257,11 @@
         reply.opening = output;
         return snapshot;
       }
+      if (action === "challenge-select") {
+        reply.preparation=output.preparation;
+        for(const message of output.messages)window.dispatchEvent(new CustomEvent("qmqz-protocol",{detail:message}));
+        return snapshot;
+      }
       if (action === "challenge-revive" && !output.reviveAccepted) return snapshot;
       Object.assign(role, output.values, {equipment:output.equipment, originalData:output.originalData,
         robotOpenId:output.robotOpenId,robotCleared:output.robotCleared, robotBestScore:output.robotBestScore,rankWaitingType:output.rankWaiting});
@@ -248,10 +289,15 @@
       await new Promise((resolve,reject) => {
         const tx = db.transaction(["roles","matchReceipts"],"readwrite");
         tx.objectStore("roles").put(role,id);
+        if (action === "challenge-start") tx.objectStore("matchReceipts").add(
+          {roomId:fields.roomId,ruleId:fields.ruleId,preparation:output.preparation},preparationKey);
         if(action==="paid-shot")tx.objectStore("matchReceipts").put({shot:fields.shot,item:fields.ammoId,spent:output.spentAmmo},ammoKey);
         if (action === "settle") {
           tx.objectStore("matchReceipts").add(role.reward,receiptKey);
-          if (fields.gameMode === 12) tx.objectStore("matchReceipts").delete(reviveKey);
+          if (fields.gameMode === 12) {
+            tx.objectStore("matchReceipts").delete(reviveKey);
+            tx.objectStore("matchReceipts").delete(preparationKey);
+          }
         }
         if (action === "challenge-revive") tx.objectStore("matchReceipts").put(
           {ruleId:fields.ruleId, deaths:[...reviveDeaths, fields.death]}, reviveKey);
@@ -260,6 +306,7 @@
         tx.oncomplete = resolve;
         tx.onabort = () => reject(tx.error);
       });
+      if (action === "challenge-start") reply.preparation=output.preparation;
       if (action === "challenge-revive") reply.accepted = true;
       if (action === "paid-shot") reply.accepted=output.spentAmmo;
       if (output.messages.some(message=>message.id===1114137)) {
@@ -300,7 +347,7 @@
     let reply = {};
     queue = queue.then(async () => {
       const fields = JSON.parse(json);
-      if (action === "bio-opening") reply = {matchId:fields.matchId};
+      if (["bio-opening","challenge-select","challenge-start"].includes(action)) reply = {matchId:fields.matchId};
       if (action === "challenge-revive") reply = {matchId:fields.matchId, death:fields.death, accepted:false};
       if (action === "paid-shot") reply={matchId:fields.matchId,shot:fields.shot,accepted:false};
       const db = await openDatabase();

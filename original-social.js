@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const modals={SocialCheer:2959,SocialCard:8609,SocialAdd:6090,SocialRequests:522,SocialBlacklist:7630,SocialChat:2860,
-    SocialShortcut:3118,SocialFilter:8017,SocialEmotion:3503};
+    SocialShortcut:3118,SocialFilter:8017,SocialEmotion:3503,SocialSpeaker:324};
   const windowNames=["SocialWindow","FriendWindow"];
   let role=0,model=null,loading=null,pending=false,selection={},channel="world",peer=0,chatBack="MainUI",redraw;
   let inspected=null,cardBack="FriendWindow",shortcutPeer=0,whisperPeers=[];
@@ -44,7 +44,7 @@
     chatBack=from;channel=friend?"friend":unread?.channel||"world";peer=friend||unread?.peer||0;h.go("SocialChat");
   }
   function parent(screen){return screen==="SocialChat"?chatBack:screen==="SocialCard"?cardBack:
-    ["SocialShortcut","SocialFilter","SocialEmotion"].includes(screen)?"SocialChat":"FriendWindow";}
+    ["SocialShortcut","SocialFilter","SocialEmotion","SocialSpeaker"].includes(screen)?"SocialChat":"FriendWindow";}
   function open(screen,h){model=null;h.go(screen);}
   function field(name) {return document.querySelector('input[name="'+name+'"]');}
   async function display(screen,nodes,state,h) {
@@ -92,6 +92,19 @@
         [cx,cy+(outer+h)/2,outer*2,outer],[cx,cy-(outer+h)/2,outer*2,outer]];
       rects.forEach(([x,y,width,height],i)=>nodes.unshift({id:"social-modal-back-"+i,parent:root.parent,name:"ChatBackdrop",
         p:[x,y],s:[1,1],z:10,active:true,overlay:true,hit:[0,0,width,height],label:"关闭",action:close}));
+    }
+    if(screen==="SocialSpeaker"){
+      const name="socialSpeaker";
+      const submit=()=>send(851970,{channel:1,content:field(name)?.value||""},result=>{
+        if(result.speaker?.spent){values[name]="";close();}
+        else if(result.speaker?.notice)notify(result.speaker.notice,50);
+      });
+      edit(nodes,2469,{active:false});
+      edit(nodes,7046,{active:true,action:submit});
+      edit(nodes,2312,{field:name,submit,input:{...nodeById(nodes,2312).input,color:[255,255,255,255]}});
+      label(nodes,7335,"请输入广播内容");
+      button(7727,()=>{if(!pending){values[name]="";close();}});
+      return;
     }
     if(screen==="SocialShortcut"){
       backdrop(1202);
@@ -241,6 +254,7 @@
     for(const [id,value] of [[5161,"world"],[3722,"friend"],[957,"private"]])
       button(id,()=>{channel=value;peer=0;render();});
     button(7224,close);
+    button(4143,()=>{values.socialSpeaker="";go("SocialSpeaker");});
     button(2250,()=>go("SocialFilter"));button(personal?8951:2865,()=>go("SocialEmotion"));
     const authors=model.history.filter(m=>m.channel==="friend" && model.friendlist[m.peer]).map(m=>m.peer);
     const contacts=channel==="friend"?[...new Set([...authors,...(model.onlinefriends||[])])]:

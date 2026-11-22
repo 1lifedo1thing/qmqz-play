@@ -67,6 +67,10 @@
       for(const [i,[root,name,icon]] of (cells[id]||[]).entries()) {
         const item=inventory.items.find(v=>v.id===card.item._items[i]);if(!item)continue;
         h.label(nodes,name,item.name);h.picture(nodes,icon,item.icon);
+        const stars=nodes.find(n=>n.parent===root&&n.name==="Stars");
+        const frame=nodes.find(n=>n.parent===stars.id&&n.name==="Star");
+        const level=nodes.find(n=>n.parent===stars.id&&n.name==="StarLevel");
+        qmqzStoreItems.stars(nodes,h,stars.id,frame.id,level.id,item.star);
         h.edit(nodes,root,{itemId:item.id,label:item.name,action:()=>qmqzStoreItems.open(item,h.openDialog,"WeekCardWindow")});
       }
     }

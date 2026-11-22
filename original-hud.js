@@ -3,6 +3,7 @@
   "use strict";
   const settings = "windows/OperationWindow/Settings/";
   const equipWindow = "windows/EquipWindow";
+  const bagPage = equipWindow+"/Center/EquipCarousel/BattleEquipCarouselItem";
   const portraitPanel = equipWindow+"/Left/RoleSelect/RoleSelectItem";
   const portraitPath = portraitPanel+"/CurentRole";
   const zombieWindow = "windows/ZombieSelect";
@@ -10,6 +11,12 @@
   const gridPath = zombieWindow + "/Center/Zombies/Grid";
   const modeBoards = {4:"PersonalScoreBoard", 6:"CaptureScoreBoard", 8:"BioScoreBoard", 10:"TerminatorScoreBoard", 12:"ChallengeScoreBoard"};
   const modeId = () => state.range ? 1 : state.gameMode || state.room?.gameMode || 8;
+  const bioLevelBar = "States/TopPanel/TopRight/Biolevel";
+  const protectionBar = "BattlePanel/Panel/Super armor";
+  const healForeground = settings + "AC_HP/Heal/Slider/Foreground";
+  let healRemaining = null, healFrame = 0;
+  let protectionDuration=0;
+  let bioTwinkle = -Infinity;
   const boardName = () => modeBoards[modeId()] || "StandardScoreBoard";
   const selecting = () => !!state.selectionWindow;
   const gunPanel = settings+"Weapon/Gun/GunPanel";
@@ -23,8 +30,8 @@
   };
   const playerRole = () => state.fighters?.[0]?.roleId || (state.side==="terrorist" ? equipment()?.terristactorid : equipment()?.policeactorid) || 101;
   function equipSlot(path) {
-    const match=path.match(/BattleEquipCarouselItem\/ItemSlot([01])(?:\/|$)/);
-    return match ? carouselPage*2+Number(match[1]) : -1;
+    const match=path.match(/BattleEquipCarouselItem(~1)?\/ItemSlot([01])(?:\/|$)/);
+    return match ? (match[1] && bagSlide ? bagSlide.to : carouselPage)*2+Number(match[2]) : -1;
   }
   function pickerItem(path,index) {
     const picker=path.match(/^(.+\/ItemSlot[01]\/(?:Armor|Weapon)(?:~\d+)?)(?:\/|$)/);
@@ -39,7 +46,7 @@
   const trigger = "Controlls/Trigger/Trigger";
   const entries = new Map([
     [settings + "Operation/Pose", "Pose"], [settings + "Operation/Jump", "Jump"],
-    [settings+"Operation/Grenade","Grenade"], [settings + "Operation/Sight","Sight"], [settings+"Operation/CloseSight","Telescope"], [settings+"Operation/Switch","Switch"],
+    [settings+"Operation/Grenade","Grenade"], [settings+"Operation/Flash","Flash"], [settings + "Operation/Sight","Sight"], [settings+"Operation/CloseSight","Telescope"], [settings+"Operation/Switch","Switch"],
     [settings + "Ammo", "Reload"], [settings + "Bullet", "Bullet"], [settings + "Weapon", "Weapon"],
     [settings + "AC_HP", "Intro"], [settings + "Skill", "Switch"], [rocker, "Rocker"], [trigger, "Trigger"]
   ]);
@@ -53,6 +60,7 @@
     ["BombPanel/Mine","objective"], ["BombPanel/Demine","objective"],
     ["BombPanel/Supply","refill"], [challengeDeath+"/Reborn","revive"],
     [settings + "Skill/Skill", "ability"], ["States/TopLeft/PauseButton", "options"],
+    ["States/Options/Toolbar/Option","fight-settings"],
     ["States/Options/Toolbar/Close", "resume"], ["States/Options/Toolbar/QuitButton", "quitDialog"],
     ["Dialog/QuitWarning/Confirm", "leave"], ["Dialog/QuitWarning/Cancel", "cancelQuit"]
   ]);
@@ -67,9 +75,14 @@
   let allyInk=false;
   let state = {}, modal = "", carouselPage=0, gunOpen=false, hitBoxes = [], geometry = new Map();
   let width = 0, height = 0, scale = 1;
-  let desktopControls;
+  let desktopControls, ammoNotice, noticeTimer;
+  let throwButtons={};
+  const throwIcons=new Map([
+    [settings+"Operation/Grenade/Grenade/Icon","手雷"],
+    [settings+"Operation/Flash/Flash/Icon","闪光"]
+  ]);
   const combatFeedback=window.createCombatFeedback(refresh);
-  let roleSlide=null;
+  let roleSlide=null, bagSlide=null;
   const portraitRole = path => roleSlide ? (path===portraitPath+"0" ? roleSlide.from : roleSlide.to) : playerRole();
 
   async function loadSprites(data) {
@@ -125,9 +138,17 @@
     allyContext=allyCanvas.getContext("2d");
     unity.parentElement.append(allyCanvas,overlay);
     overlay.hidden = true;
+    ammoNotice=document.createElement("span");
+    ammoNotice.setAttribute("role","status");
+    ammoNotice.style.cssText="position:absolute;bottom:24%;left:50%;transform:translateX(-50%);color:white;background:#161616cc;padding:.35em .7em;pointer-events:none;font:14px OriginalMYH,sans-serif;white-space:nowrap";
+    ammoNotice.hidden=true;
+    unity.after(ammoNotice);
     ctx = overlay.getContext("2d");
-    desktopControls = window.createDesktopControls(unity, send, refresh);
-    observer = new ResizeObserver(refresh);
+    desktopControls = window.createDesktopControls(unity,send,refresh,e=>{
+      const point=position(e);
+      return hitBoxes.some(b=>Math.abs(point.x-b.x)<=b.w/2 && Math.abs(point.y-b.y)<=b.h/2);
+    });
+    observer = new ResizeObserver(()=>{if(touches.size)clearInput();refresh();});
     observer.observe(unity);
     for (const type of ["pointerdown","pointermove","pointerup","pointercancel"]) {
       window.addEventListener(type, input, {capture:true, passive:false});
@@ -155,6 +176,9 @@
     const feedbackVisible=combatFeedback.visible(path);
     if (feedbackVisible!==undefined) return feedbackVisible;
     const infected = state.side === "infected";
+    if(path===bioLevelBar)return [8,10].includes(modeId()) && !!state.side;
+    if(path===bioLevelBar+"/Human")return !infected;
+    if(path===bioLevelBar+"/Zombie")return infected;
     if(path===settings+"Bullet/Bullet/IconEnhance" || path===settings+"Bullet/Effect")return !!state.enhancedAmmoSelected;
     if (desktopControls?.desktop && (path==="Controlls" || path===settings+"Operation")) return false;
     if (path === "Zombie") return false;
@@ -167,7 +191,7 @@
     if (path === equipWindow + "/Left/LeftArrow" || path === equipWindow + "/Left/RightArrow") return state.humanActorChoices?.length>1;
     if (path===portraitPath+"1") return !!roleSlide;
     if (path === zombieWindow + "/Center/Zombies/Highlight") return false;
-    if (path.includes("BattleEquipCarouselItem~")) return false;
+    if (path===bagPage+"~1") return !!bagSlide;
     const tab=equipSlot(path);
     if (tab>=0) {
       if (!loadout(tab) && (tab!==0 || equipment())) return false;
@@ -180,7 +204,7 @@
     if (path===gunPanel) return gunOpen;
     if (path.startsWith(gunPanel+"/Panel/")) {
       const slot=panelSlots[path.split("/")[7]];
-      if (slot && !itemAt(activeTab(),slot)) return false;
+      if (slot && (!itemAt(activeTab(),slot) || slot===42 && !state.canFlash)) return false;
     }
     if (selecting() && !path.startsWith("windows") && !path.startsWith("Zombie")) return false;
     if (path==="windows/DeathWindow" || path===challengeDeath)
@@ -194,6 +218,7 @@
     if (path.startsWith("BombPanel/ProgressBar") && path.split("/").length===2)
       return modeId()===2 && state.operating && state.operationSeconds>0 && (path.endsWith("Demine") === !!state.bombPlanted);
     const won = state.phase === "MatchOver" || state.phase === "RoundOver";
+    if(path===protectionBar)return !won && state.alive && state.spawnProtectionSeconds>0;
     if (path.startsWith("windows/OperationWindow/ZombieSettings")) return false;
     if (path === "States/Options") return modal !== "";
     if (path === "Dialog") return true;
@@ -213,13 +238,15 @@
     }
     if (path.startsWith("BattlePanel/Panel/Win")) return bio && won && (state.winner === "human" ? path.endsWith("WinHuman") : state.winner === "infected" && path.endsWith("WinZombie"));
     if (path === "BattlePanel" || path === "BattlePanel/Panel") return true;
-    if (path === "Crosshair/Panel") return !won && state.alive;
+    if (path === "Crosshair/Panel") return !won && state.alive && !(state.aiming && state.sightType>0);
+    if(path==="Crosshair/Reflex" || path==="Crosshair/Holographic")
+      return !won && state.alive && !modal && !selecting() && state.aiming && state.sightType===(path.endsWith("/Reflex")?2:1);
     if (path === "States" || path === "States/TopLeft" || path === "States/TopPanel") return true;
     if (path === "Controlls" || path === "windows/OperationWindow") return !modal && !won && !selecting() && state.alive;
     if (path === rocker + "/Trail") return [...touches.values()].some(t=>t.action==="move" && Math.hypot(t.dx,t.dy)>=48);
-    if (path === trigger + "/Dock") return ![...touches.values()].some(t=>t.action==="aim");
+    if (path === trigger + "/Dock") return ![...touches.values()].some(t=>qmqzTouchLayout.fixed?t.firing:t.action==="aim" || t.firing);
     if (path === trigger + "/Fire") return [...touches.values()].some(t => t.firing);
-    if (path === trigger + "/Drag") return [...touches.values()].some(t => t.action === "aim" && !t.firing);
+    if (path === trigger + "/Drag") return !qmqzTouchLayout.fixed && [...touches.values()].some(t=>t.action==="aim") && ![...touches.values()].some(t=>t.firing);
     const board = path.split("/")[0];
     if (layout.boards.includes(board)) {
       const leaf = path.slice(board.length);
@@ -241,20 +268,37 @@
     if (name === "Weapon") return !infected;
     if (name === "Bullet") return !infected && state.enhancedAmmoAvailable === true;
     if (name === "AC_HP/Shield") return state.shield > 0;
-    if (name === "AC_HP/Mother") return infected && state.mother === true;
-    if (name === "AC_HP/Immunity") return state.immunity === true;
-    if (name === "AC_HP/Heal") return Number.isFinite(state.healCooldown);
+    if (name === "AC_HP/Mother") return bio && (infected ? state.mother : state.hero);
+    if (name === "AC_HP/Immunity") return bio && state.hero;
+    if (name === "AC_HP/Heal") return infected;
     if (name === "Skill/Skill/Slider/Foreground") return state.cooldown > 0;
     if (name === "Operation/Switch") return !infected && !state.hero;
     if (name === "Operation/Sight/Sight") return state.canAim && !state.aiming;
     if (name === "Operation/CloseSight/CloseSight") return !!state.aiming;
-    if (name === "Operation/Grenade") return !!state.canGrenade;
-    if (name === "Operation/Flash") return false;
+    if (name === "Operation/Grenade") return !!state.canGrenade && qmqzTouchLayout.shortcut("Grenade");
+    if (name === "Operation/Flash") return !!state.canFlash && qmqzTouchLayout.shortcut("Flash");
     return n.active;
   }
 
   function runtimeValue(path, widget) {
     const val = {key:widget.image, text:widget.text, color:widget.color, fill:1};
+    if (path === healForeground && healRemaining !== null) {
+      const now = performance.now();
+      healRemaining = Math.max(0, healRemaining - Math.min((now-healFrame)/1000, 1/3));
+      healFrame = now;
+      val.fill = healRemaining/15;
+      if (healRemaining > 0) refresh();
+    }
+    if(path===protectionBar+"/Slider/Foreground")
+      val.fill=clamp((protectionDuration-state.spawnProtectionSeconds)/Math.max(.001,protectionDuration-.3),0,1);
+    if(path.startsWith(bioLevelBar+"/")){
+      const infected=state.side==="infected";
+      if(path.endsWith("/Level"))val.text="LV."+(state.bioLevel||0);
+      if(path.endsWith("/bouns"))val.text=(infected?"生命值+":"攻击力+")+(state.bioBonus||0);
+      if(path.endsWith("/LevelBar/Foreground"))val.fill=Math.min(1,(state.bioExp||0)/(infected?20:40));
+      const age=performance.now()-bioTwinkle;
+      if(age<600){val.color=[...val.color];val.color[3]*=Math.abs(1-(age%300)/150);refresh();}
+    }
     if (path==="States/TopPanel/Top/Star/Star") val.text=String(state.rangeScore||0);
     combatFeedback.value(path,val);
     const dynamic = key => layout.dynamic[key]?.split("/").pop();
@@ -296,6 +340,7 @@
     if (path === settings + "AC_HP/HP/Slider/Foreground") val.fill = state.maxHp > 0 ? state.hp / state.maxHp : 1;
     if (path === settings + "AC_HP/AC/Slider/Foreground") val.fill = state.maxAc > 0 ? state.ac / state.maxAc : 0;
     if (path === settings + "AC_HP/Head") val.key = dynamic(state.fighters?.[0]?.roleId || (infected ? state.roleId : state.hero ? 1999 : 101));
+    if (path === settings + "AC_HP/Mother" && state.hero) val.key = "GameAtlas-Icon_Hero";
     if (path === "States/Options/ScorePanel/PersonalMode/GameMode/GameMode") val.text = state.room?.modeName || "生化模式";
     if (path.includes("ScorePanel/Table/") && path.includes("/PlayerCard")) {
       const row = playerRow(path);
@@ -319,6 +364,8 @@
       val.color = state.paidStock>0 ? [1,1,1,1] : [.5,.5,.5,1];
     }
     if (path === settings + "Bullet/Bullet/Val") val.text=String(state.paidStock??0);
+    if(path===settings+"Bullet/Bullet/Background" && state.enhancedAmmoSelected && widget.pressedImage)
+      val.key=widget.pressedImage;
     if (path === settings + "Skill/Skill/Slider/Background") val.key = layout.skillImages[state.roleId] || val.key;
     const board = path.split("/")[0], leaf=path.slice(board.length);
     if (layout.boards.includes(board)) {
@@ -352,6 +399,10 @@
     if (layout.boards.includes(path)) p = geometry.get(scoreboardHost);
     let [x,y] = n.xy, [sx,sy] = combatFeedback.privateScale(path,combatFeedback.scale(path,n.scale));
     if (path==="BattlePanel/Panel/GameBlind") { sx=width; sy=height; }
+    if(path===protectionBar && state.spawnProtectionSeconds<.15){
+      const fraction=clamp(state.spawnProtectionSeconds/.15,0,1);
+      sx*=fraction;sy*=fraction;
+    }
     if (n.anchor) {
       const sides = [[-1,-1],[-1,0],[-1,1],[0,1],[1,1],[1,0],[1,-1],[0,-1],[0,0]];
       const side = sides[n.anchor[0]];
@@ -362,11 +413,12 @@
       x=layout.bodyOffsets[portraitRole(path)] ?? 0;
       if(roleSlide) x+=roleSlide.direction*roleSlide.width*((path===portraitPath+"1"?1:0)-roleSlide.progress);
     }
+    if(bagSlide && (path===bagPage || path===bagPage+"~1"))
+      y+=bagSlide.direction*layout.nodes[bagPage].box.size[1]*(bagSlide.progress-(path===bagPage?0:1));
     const def = layout.defaults[entries.get(path)];
     if (def) {
-      x = def.X + ((def.Anchor & 8) ? -width/2 : (def.Anchor & 2) ? width/2 : 0);
-      y = def.Y + ((def.Anchor & 4) ? -height/2 : (def.Anchor & 1) ? height/2 : 0);
-      sx = sy = def.Scale;
+      const key=entries.get(path),placed=throwButtons[key]||qmqzTouchLayout.position(key,def,width,height);
+      x=placed.x; y=placed.y; sx=sy=placed.scale;
     }
     if (path === rocker + "/Drag") {
       const movement = [...touches.values()].find(t => t.action === "move");
@@ -381,10 +433,10 @@
       if (t) angle=Math.atan2(t.dy,t.dx)-Math.PI/2;
     }
     if (path === trigger) {
-      const aim=[...touches.values()].find(t=>t.action==="aim");
-      if (aim) {
-        const border=layout.defaults.Trigger.W/2;
-        x=clamp(aim.x,border,width/2-border); y=clamp(aim.y,-height/2+border,height/2-border);
+      const aim=[...touches.values()].find(t=>t.firing) || [...touches.values()].find(t=>t.action==="aim");
+      if (aim && !qmqzTouchLayout.fixed) {
+        const border=layout.defaults.Trigger.W*sx/2;
+        x=clamp(aim.x,-width/2+border,width/2-border); y=clamp(aim.y,-height/2+border,height/2-border);
       }
     }
     const cos=Math.cos(p.angle), sin=Math.sin(p.angle);
@@ -480,11 +532,27 @@
         if (v.fill < 1) {
           const fraction=clamp(v.fill,0,1);
           ctx.beginPath();
-          if (v.verticalFromTop) ctx.rect(x,y,w,h*fraction);
+          if (path === healForeground) {
+            // UISprite.FilledFill, Radial360 non-inverted: upper-left quadrant first.
+            const cx=x+w/2, cy=y+h/2, start=-Math.PI/2;
+            ctx.moveTo(cx,cy);
+            ctx.arc(cx,cy,Math.hypot(w,h)/2,start,start-fraction*2*Math.PI,true);
+            ctx.closePath();
+          } else if (v.verticalFromTop) ctx.rect(x,y,w,h*fraction);
           else ctx.rect(x,y,w*fraction,h);
           ctx.clip();
         }
+        const title=throwIcons.get(path);
+        if(title){
+          ctx.fillStyle="rgba(8,18,27,.62)";
+          ctx.beginPath();ctx.arc(0,0,w*.49,0,2*Math.PI);ctx.fill();
+        }
         picture(img,meta,x,y,w,h,widget.type===1,path==="BattlePanel/Panel/GameBlind" || path.startsWith("windows/TargetPanel/"));
+        if(title){
+          ctx.font="600 "+Math.max(10/scale,w*.23)+"px OriginalMYH,sans-serif";
+          ctx.textAlign="center";ctx.textBaseline="middle";ctx.lineJoin="round";ctx.lineWidth=2/scale;
+          ctx.strokeStyle="#13202a";ctx.strokeText(title,0,h*.29);ctx.fillStyle="#fff";ctx.fillText(title,0,h*.29);
+        }
       }
     }
     ctx.restore();
@@ -510,7 +578,7 @@
 
   function render() {
     if (!overlay) return;
-    overlay.hidden = state.mode !== "match" || !layout;
+    overlay.hidden = state.mode !== "match" || !layout || modal==="settings";
     if(overlay.hidden || modal || selecting())allyCanvas.hidden=true;
     if (overlay.hidden) return;
     combatFeedback.beginFrame(modal || selecting() ? null : state.identity);
@@ -519,16 +587,38 @@
     scale=r.height/layout.root.manualHeight;
     height=layout.root.manualHeight;
     width=r.width/scale;
+    throwButtons=desktopControls?.desktop?{}:qmqzTouchLayout.throwables(layout.defaults,width,height,scale);
     const dpi=Math.min(window.devicePixelRatio || 1,2);
     const px=Math.round(r.width*dpi), py=Math.round(r.height*dpi);
     if (overlay.width!==px || overlay.height!==py) { overlay.width=px; overlay.height=py; }
     ctx.setTransform(px/width,0,0,py/height,0,0);
     ctx.clearRect(0,0,width,height);
+    if (state.alive && state.scopePrepared && !modal && !selecting()) {
+      // ACrosshair.DrawTeleScopeTag draws a black aperture and two one-pixel quads.
+      const cx=width/2,cy=height/2;
+      ctx.fillStyle="#000";
+      ctx.beginPath();
+      ctx.rect(0,0,width,height);
+      ctx.moveTo(cx+height*.4,cy);
+      ctx.arc(cx,cy,height*192/480,0,Math.PI*2);
+      ctx.fill("evenodd");
+      ctx.fillRect(cx-width/(2*px),0,width/px,height);
+      ctx.fillRect(0,cy-height/(2*py),width,height/py);
+    }
     const widgets=[];
     if(roleSlide) {
       const t=Math.min(1,(performance.now()-roleSlide.started)/500);
       roleSlide.progress=t-Math.sin(t*2*Math.PI)/(2*Math.PI);
       if(t===1)roleSlide=null;else refresh();
+    }
+    if(bagSlide) {
+      const t=Math.min(1,(performance.now()-bagSlide.started)/500);
+      bagSlide.progress=t-Math.sin(t*2*Math.PI)/(2*Math.PI);
+      if(t===1) {
+        const {to,index}=bagSlide;
+        carouselPage=to;bagSlide=null;
+        if(index!==activeTab())send("original-loadout:"+index);
+      } else refresh();
     }
     hitBoxes=[]; geometry=new Map();
     for (const [path,n] of Object.entries(layout.nodes)) {
@@ -546,15 +636,19 @@
           path.startsWith("BattlePanel/") ? 1 : 0;
         widgets.push({path,g,widget:n.widget,layer});
       }
-      const action=/BattleEquipCarouselItem\/ItemSlot[01]$/.test(path) ? "original-loadout:"+equipSlot(path) : buttonActions.get(path);
+      const action=!bagSlide && /BattleEquipCarouselItem\/ItemSlot[01]$/.test(path) ? "original-loadout:"+equipSlot(path) : buttonActions.get(path);
+      if(path===bagPage && !bagSlide)hitBoxes.unshift({action:"swipe-bags",x:g.x,y:g.y,w:n.box.size[0]*g.sx,h:n.box.size[1]*g.sy});
       if (action && n.box?.enabled) {
         const [ox,oy] = n.box.offset;
         hitBoxes.push({action,x:g.x+ox*g.sx,y:g.y+oy*g.sy,w:n.box.size[0]*g.sx,h:n.box.size[1]*g.sy});
       }
-      if (path===settings+"Operation/Pose" || path===settings+"Operation/Grenade") {
-        const pose=path.endsWith("/Pose"), def=pose ? layout.defaults.Pose : layout.defaults.Grenade;
-        const size=def.W*def.Scale;
-        hitBoxes.push({action:pose ? "crouch":"grenade",x:g.x,y:g.y,w:size,h:size});
+      if(path===settings+"Bullet/Bullet/IconAmmo" || path===settings+"Bullet/Bullet/Background"){
+        // The artwork extends beyond the serialized collider. Nearby weapon controls keep priority.
+        hitBoxes.unshift({action:"toggle-ammo",x:g.x,y:g.y,w:Math.abs(g.sx),h:Math.abs(g.sy)});
+      }
+      if (path===settings+"Operation/Pose" || path===settings+"Operation/Grenade" || path===settings+"Operation/Flash") {
+        const key=entries.get(path),size=throwButtons[key]?.hit||layout.defaults[key].W*g.sx;
+        hitBoxes.push({action:key==="Pose"?"crouch":key.toLowerCase(),x:g.x,y:g.y,w:size,h:size});
       }
     }
     widgets.sort((a,b)=>a.layer-b.layer || Math.round((b.g.z-a.g.z)*1000) ||
@@ -566,6 +660,12 @@
   }
 
   function send(value) {
+    if(value==="toggle-ammo" && !state.enhancedAmmoSelected && (!state.enhancedAmmoAvailable || !state.paidStock)){
+      ammoNotice.textContent=state.range?"靶场使用配发弹药":!state.enhancedAmmoAvailable?"当前武器无法使用穿甲弹":"当前武器的穿甲弹为 0，可在背包购买";
+      ammoNotice.hidden=false;
+      clearTimeout(noticeTimer);
+      noticeTimer=setTimeout(()=>{ammoNotice.hidden=true;},1800);
+    }
     window.qmqzUnity?.SendMessage("WebClient","Command",value);
   }
 
@@ -573,7 +673,7 @@
     const moving = [...touches.values()].some(t=>t.action==="move");
     const firing = [...touches.values()].some(t=>t.firing);
     if ([...touches.values()].some(t=>t.action==="aim")) send("look-up");
-    if ([...touches.values()].some(t=>t.action==="grenade")) send("grenade-up");
+    for(const t of touches.values())if(t.action==="grenade" || t.action==="flash")send("weapon:"+t.previousSlot);
     if ([...touches.values()].some(t=>t.action==="objective")) send("objective-up");
     if ([...touches.values()].some(t=>t.action==="refill")) send("refill-up");
     touches.clear();
@@ -589,6 +689,10 @@
       return;
     }
     if (action==="gun-panel") { gunOpen=!gunOpen; refresh(); return; }
+    if(action==="fight-settings"){
+      clearInput();modal="settings";desktopControls?.update(state,modal);refresh();
+      window.dispatchEvent(new Event("qmqz-open-fight-settings"));return;
+    }
     if (action.startsWith("weapon:")) { gunOpen=false; refresh(); }
     if (action==="options" || action==="quitDialog" || action==="resume" || action==="cancelQuit") {
       clearInput();
@@ -601,13 +705,20 @@
 
   function selectBag(index) {
     const count=equipment()?.loadouts?.length||0;
-    if(index<0 || index>=count)return;
-    carouselPage=Math.floor(index/2);
-    send("original-loadout:"+index);
+    if(index<0 || index>=count || bagSlide)return;
+    const page=Math.floor(index/2);
+    if(page!==carouselPage)slideBags(page,Math.sign(page-carouselPage),index);
+    else send("original-loadout:"+index);
+    refresh();
+  }
+
+  function slideBags(to,direction,index=to*2) {
+    if(bagSlide || to===carouselPage)return;
+    bagSlide={to,direction,index,started:performance.now(),progress:0};
     refresh();
   }
   function keys(e) {
-    if(state.mode!=="match" || e.repeat || e.ctrlKey || e.altKey || e.metaKey)return;
+    if(state.mode!=="match" || modal==="settings" || e.repeat || e.ctrlKey || e.altKey || e.metaKey)return;
     if (!modal && state.selectionWindow==="EquipWindow") {
       if(e.code==="Enter" || e.code==="NumpadEnter")activate("enter");
       else if(/^Digit[1-9]$/.test(e.code))selectBag(Number(e.code.slice(5))-1);
@@ -632,21 +743,31 @@
     if (e.type==="pointerdown") {
       if (e.target!==unity || e.button!==0 || document.pointerLockElement) return;
       const hits = modal === "quit" ? hitBoxes.filter(b=>b.action==="leave" || b.action==="cancelQuit") :
-        modal ? hitBoxes.filter(b=>b.action==="resume" || b.action==="quitDialog") : hitBoxes;
+        modal ? hitBoxes.filter(b=>b.action==="resume" || b.action==="quitDialog" || b.action==="fight-settings") : hitBoxes;
       const hit = [...hits].reverse().find(b=>Math.abs(point.x-b.x)<=b.w/2 && Math.abs(point.y-b.y)<=b.h/2);
       if ((modal || selecting()) && !hit) { e.preventDefault(); e.stopImmediatePropagation(); return; }
       if (!hit && (e.pointerType==="mouse" || !state.alive || ["RoundOver","MatchOver"].includes(state.phase))) return;
-      const action=hit?.action || (point.x<0 ? "move" : "aim");
-      if ([...touches.values()].some(t=>t.action===action)) return;
-      const dock=geometry.get(trigger), size=layout.defaults.Trigger.W;
-      const firing=action==="aim" && Math.abs(point.x-dock.x)<=size/2 && Math.abs(point.y-dock.y)<=size/2;
-      touch={action, hit, firing, ...point, firstX:point.x, firstY:point.y, dx:0,dy:0, lastX:e.clientX,lastY:e.clientY};
+      // LLayout.GetTriggerRect uses the saved dock even while the drag graphic follows the aiming finger.
+      const dock=qmqzTouchLayout.position("Trigger",layout.defaults.Trigger,width,height), stick=geometry.get(rocker);
+      const fireSize=Math.abs(layout.nodes[trigger+"/Dock"].scale[0]*dock.scale);
+      const onFire=Math.hypot(point.x-dock.x,point.y-dock.y)<=fireSize/2;
+      const onStick=Math.hypot(point.x-stick.x,point.y-stick.y)<=64*Math.abs(stick.sx);
+      let action=hit?.action || (onFire?"aim":onStick?"move":point.x<0?"move":"aim");
+      if(action==="aim"){
+        const existing=[...touches.values()].find(t=>t.action==="aim");
+        if(onFire && [...touches.values()].some(t=>t.firing))return;
+        if(existing && onFire)action="fire";
+        else if(existing?.firing){existing.action="fire";send("look-up");}
+      }
+      if ([...touches.values()].some(t=>t.action===action || (action==="grenade"||action==="flash")&&(t.action==="grenade"||t.action==="flash"))) return;
+      const firing=(action==="aim" || action==="fire") && onFire;
+      touch={action, hit, firing, previousSlot:state.weaponSlot, ...point, firstX:point.x, firstY:point.y, dx:0,dy:0, lastX:e.clientX,lastY:e.clientY};
       touches.set(e.pointerId,touch);
       unity.setPointerCapture(e.pointerId);
       if (action==="aim") send("look-down");
       if (action==="objective") send("objective-down");
       if (action==="refill") send("refill-down");
-      if (action==="grenade") send("grenade-down");
+      if (action==="grenade" || action==="flash") send(action+"-down");
       if (firing) send("fireDown");
       if (["jump","crouch","previous-weapon"].includes(action)) activate(action);
     } else if (!touch) return;
@@ -659,7 +780,10 @@
       if (length<16) send("move:0,0");
       else send("move:"+(x/length).toFixed(4)+","+(y/length).toFixed(4));
     } else if (e.type==="pointermove" && touch.action==="aim") {
-      send("look:"+(e.clientX-touch.lastX).toFixed(2)+","+(e.clientY-touch.lastY).toFixed(2));
+      const x=e.clientX-touch.lastX, y=e.clientY-touch.lastY;
+      // Rebase a discontinuous contact (rotation or browser re-centering) at its new position.
+      if(Math.abs(x)<unity.clientWidth*.45 && Math.abs(y)<unity.clientHeight*.45)
+        send("look:"+x.toFixed(2)+","+y.toFixed(2));
       Object.assign(touch,point,{lastX:e.clientX,lastY:e.clientY});
     } else if (e.type==="pointerup" || e.type==="pointercancel") {
       touches.delete(e.pointerId);
@@ -668,7 +792,8 @@
       if (touch.action==="aim") send("look-up");
       if (touch.action==="objective") send("objective-up");
       if (touch.action==="refill") send("refill-up");
-      if (touch.action==="grenade") send("grenade-up");
+      if (touch.action==="grenade" || touch.action==="flash")
+        send(e.type==="pointerup"?touch.action+"-up":"weapon:"+touch.previousSlot);
       const b=touch.hit;
       if(touch.action==="swipe-actor") {
         const dx=point.x-touch.firstX, choices=state.humanActorChoices||[];
@@ -681,12 +806,18 @@
         }
         refresh();return;
       }
-      if (touch.action.startsWith("original-loadout:") && Math.abs(point.x-touch.firstX)>64) {
+      if (touch.action==="swipe-bags" || touch.action.startsWith("original-loadout:")) {
+        if(e.type!=="pointerup")return;
+        const dy=point.y-touch.firstY, dx=touch.firstX-point.x;
         const pages=Math.ceil((equipment()?.loadouts?.length || 1)/2);
-        carouselPage=clamp(carouselPage+Math.sign(touch.firstX-point.x),0,pages-1);
-        render(); return;
+        const direction=Math.abs(dy)>=height*.05 ? Math.sign(dy) : Math.abs(dx)>64 ? Math.sign(dx) : 0;
+        if(direction){
+          slideBags((carouselPage+direction+pages)%pages,direction);
+          return;
+        }
+        if(touch.action==="swipe-bags")return;
       }
-      if (e.type==="pointerup" && b && !["jump","crouch","objective","refill","previous-weapon","grenade"].includes(b.action) &&
+      if (e.type==="pointerup" && b && !["jump","crouch","objective","refill","previous-weapon","grenade","flash"].includes(b.action) &&
           Math.abs(point.x-b.x)<=b.w/2 && Math.abs(point.y-b.y)<=b.h/2) {
         activate(b.action);
         if (b.action==="resume" && e.pointerType==="mouse") desktopControls?.requestControl();
@@ -698,10 +829,24 @@
   window.addEventListener("qmqz-state", event => {
     const lastWindow=state.selectionWindow;
     const wasHeroMode=state.mode==="match" && modeId()===10;
+    const previous=state;
     state=event.detail || {};
+    if (state.mode!=="match" || state.side!=="infected" || !state.alive ||
+        previous.round!==state.round || previous.side!==state.side) {
+      healRemaining=null;
+    } else if (state.hp<previous.hp) {
+      // HeroInjured and the HP-consuming rage skill use the client's BioProperty.healWait.
+      healRemaining=15;
+      healFrame=performance.now();
+    }
+    if(!(state.spawnProtectionSeconds>0))protectionDuration=0;
+    else if(!protectionDuration || state.spawnProtectionSeconds>(previous.spawnProtectionSeconds||0))
+      protectionDuration=state.spawnProtectionSeconds;
+    if(state.mode==="match" && [8,10].includes(modeId()) && state.bioExp>0 &&
+      (state.bioExp!==previous.bioExp || state.side!==previous.side))bioTwinkle=performance.now();
     combatFeedback.setActive(state.mode==="match");
     if(!wasHeroMode && state.mode==="match" && modeId()===10)combatFeedback.prepareHeroWord();
-    if (lastWindow!==state.selectionWindow) { carouselPage=Math.floor(activeTab()/2); gunOpen=false; roleSlide=null; }
+    if (lastWindow!==state.selectionWindow) { carouselPage=Math.floor(activeTab()/2);gunOpen=false;roleSlide=null;bagSlide=null; }
     create();
     desktopControls?.update(state, modal);
     unity?.parentElement.toggleAttribute("data-qmqz-match",state.mode==="match");
@@ -709,9 +854,13 @@
       if (!pending) pending=readLayout().catch(error=>{ pending=null; console.error("原版战斗界面加载失败",error); });
     } else {
       modal="";
+      if(ammoNotice)ammoNotice.hidden=true;
       clearInput();
     }
     refresh();
+  });
+  window.addEventListener("qmqz-close-fight-settings",()=>{
+    if(modal==="settings"){modal="options";desktopControls?.update(state,modal);refresh();}
   });
   window.qmqzUiDensity.media.addEventListener("change",()=>{
     if(layout) loadSprites(layout).then(refresh);

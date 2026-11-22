@@ -2,6 +2,7 @@
 @font-face { font-family: OriginalFatChar; src: url("original-ui/FatChar.ttf") format("truetype"); font-display: block; }
 @font-face { font-family: OriginalNumber; src: url("original-ui/Number.ttf") format("truetype"); font-display: block; }
 #original-menu { position: absolute; inset: 0; overflow: hidden; background: #000; }
+#original-menu[data-screen="FightSettings"] { background:#0008; z-index:3; }
 #original-menu[data-screen="Exhibition"] { background: transparent; touch-action: none; }
 #original-menu[data-screen="Exhibition"] [data-object="Stage"] { pointer-events: none; }
 #original-stage { position: absolute; transform-origin: 0 0; left: 50%; top: 50%; }

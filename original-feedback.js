@@ -20,6 +20,11 @@ window.createCombatFeedback = function (redraw) {
   const green=[0,190/255,80/255,1], red=[237/255,35/255,34/255,1];
   const privateNotices=[];
   let privateStart=0, badgeTime=0, currentTarget;
+  window.addEventListener("qmqz-streak-reset",({detail:owner})=>{
+    if(owner>0)return;
+    privateNotices.length=0;privateStart=badgeTime=0;
+    if(active)redraw();
+  });
   window.addEventListener("qmqz-range-blind", ({detail}) => {
     if (active) { blindAlpha=detail; redraw(); }
   });
@@ -61,6 +66,7 @@ window.createCombatFeedback = function (redraw) {
     if (!active || !hit || hit.sequence<=sequence) return;
     sequence=hit.sequence;
     const time=performance.now();
+    if(hit.killed && hit.target===0)privateNotices.length=0;
     if (hit.source===0 && hit.killType>=0 && (hit.killed || hit.killType===6 || hit.killType===7)) {
       if (hit.killType===10) prepareHeroWord();
       if (!privateNotices.length) privateStart=time;
@@ -93,6 +99,7 @@ window.createCombatFeedback = function (redraw) {
   function setActive(value) {
     active=value;
     if (value) return;
+    sequence=0;
     rows.length=0; hitUntil=injureUntil=0; koCount=0; koStart=0; blindAlpha=0;
     privateNotices.length=0; currentTarget=null;
     clearTimeout(wakeTimer); nextWake=0;
@@ -233,7 +240,7 @@ window.createCombatFeedback = function (redraw) {
     for (let i=0;i<count;i++) {
       const at=offset+i*3,name=fighters?.[positions[at]]?.nickname;
       if (!name) continue;
-      const x=positions[at+1]*w, y=(1-positions[at+2])*h-22;
+      const x=positions[at+1]*w, y=(1-positions[at+2])*h;
       if (x<30 || x>w-30 || y<9 || y>h-9 || placed.some(pos=>Math.abs(x-pos.x)<84 && Math.abs(y-pos.y)<18)) continue;
       ctx.save();ctx.translate(x,y);
       window.qmqzFonts.draw(ctx,widget,name,16,green);

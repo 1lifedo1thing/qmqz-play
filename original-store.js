@@ -84,26 +84,34 @@
     const list=row?.[currency]||0;
     return [currency,row?.discount===1 ? Math.ceil(list/2) : list,list];
   }
-  async function display(screen,nodes,state,api) {
-    const {data,edit,label,picture,clonePrefab,nodeById,command,go,openDialog,closeDialog,dialog,notify,redraw}=api;
-    const [store,catalog,strings]=await Promise.all([data("store"),data("inventory"),data("strings")]);
-    const profile=state.profile||{}, owned=profile.equipment?.ownedItems||[];
+  async function shell(screen,nodes,profile,api) {
+    const {data,edit,label,picture,nodeById,go}=api;
     const shell=(await data("StoreShell")).filter(n=>!nodeById(nodes,n.id)).map(n=>({...n}));
     const bg=(await data("MainUI")).find(n=>n.id===7805);
     nodes.push(...shell,{...bg});edit(nodes,1066,{active:true});edit(nodes,5531,{active:true});
     edit(nodes,568,{action:()=>go(screen==="RechargeWindow"?rechargeBack:"MainUI")});
     edit(nodes,3822,{action:()=>{qmqzShopPrizes.begin();go("GachaWindow");}});
     edit(nodes,3871,{action:()=>{begin();go("StoreWindow");}});
-    edit(nodes,1129,{action:()=>window.qmqzPosters.destination("ActivityForm|6",go,screen)});
+    edit(nodes,1129,{action:()=>{if(screen!=="ActivityForm")window.qmqzPosters.destination("ActivityForm|6",go,screen);}});
     edit(nodes,2561,{action:()=>window.qmqzRoulette.enter(go,screen)});
     edit(nodes,773,{action:()=>qmqzWeekCards.open(go,screen)});
-    const footerTab={GachaWindow:3822,StoreWindow:3871,RouletteWindow:2561,WeekCardWindow:773};
-    const activeFooter=nodeById(nodes,footerTab[screen==="RechargeWindow"?rechargeBack:screen])?.buttonSprite;
-    if(activeFooter)picture(nodes,activeFooter.target,activeFooter.pressed);
+    const {storeTabs,pages}=await data("window-navigation"),active=pages[screen==="RechargeWindow"?rechargeBack:screen];
+    for(const [name,tab] of Object.entries(storeTabs)){
+      const style=tab.states[Number(name===active)];
+      picture(nodes,tab.icon,style.image);picture(nodes,tab.background,style.plate);
+      const text=nodeById(nodes,tab.label);
+      text.widget={...text.widget,color:style.color,foot:style.foot,shadow:style.shadow};
+    }
     edit(nodes,1926,{label:"钻石充值",action:()=>recharge(go,screen==="RechargeWindow"?rechargeBack:screen)});
     edit(nodes,7441,{label:"荣誉兑换",action:()=>recharge(go,screen==="RechargeWindow"?rechargeBack:screen,1)});
     // Original server uses role.money for client gold, role.gold for client gem and role.diamond for honor.
     label(nodes,1908,profile.money);label(nodes,2605,profile.gold);label(nodes,1491,profile.diamond);
+  }
+  async function display(screen,nodes,state,api) {
+    const {data,edit,label,picture,clonePrefab,nodeById,command,go,openDialog,closeDialog,dialog,notify,redraw}=api;
+    const [store,catalog,strings]=await Promise.all([data("store"),data("inventory"),data("strings")]);
+    const profile=state.profile||{}, owned=profile.equipment?.ownedItems||[];
+    await shell(screen,nodes,profile,api);
     if(dialog==="PrizeInfo")await qmqzShopPrizes.showInfo(nodes,api);
     if(screen==="RouletteWindow"){await window.qmqzRoulette.display(nodes,state,api);return;}
     if(screen==="WeekCardWindow"){await qmqzWeekCards.display(nodes,state,api);return;}
@@ -365,7 +373,7 @@
     edit(overlay,fields.otherBuy,{label:"赠送",action:()=>notify(472)});
     edit(overlay,fields.close,{action:closeDialog});nodes.push(...overlay);
   }
-  window.qmqzStore={display,begin,gacha,finishPurchase,protocol,recharge,priceOf,offset:()=>offset,setOffset,
+  window.qmqzStore={display,shell,begin,gacha,finishPurchase,protocol,recharge,priceOf,offset:()=>offset,setOffset,
     canCloseDraw:()=>!!lastDraw?.clock.start && performance.now()-lastDraw.clock.start>=1650+lastDraw.ids.length*300,
     gachaOffset:()=>gachaOffset,setGachaOffset:value=>{gachaOffset=Math.max(0,Math.min(512,value));}};
 })();

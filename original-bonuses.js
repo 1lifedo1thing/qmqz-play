@@ -86,7 +86,10 @@
       }:null});
       if(sec && !dialog)timer=setTimeout(()=>{if(document.querySelector("#original-menu")?.dataset.screen==="PrizeWindow")render();},1000);
       if(daily) {
-        const next=cfg.login.find(v=>v.day===daily.accday+1), strings=await data("strings");
+        // The local APK service keeps accumulating days. After day 30 it cycles the stable day-sorted table.
+        const rewards=[...cfg.login].sort((a,b)=>a.day-b.day);
+        const next=rewards.find(v=>v.day===daily.accday+1) || rewards[daily.accday%rewards.length];
+        const strings=await data("strings");
         label(nodes,1264,strings[daily.rewarded?433:434]);label(nodes,25,strings[daily.rewarded?372:371]);
         edit(nodes,4737,{action:()=>{
           calendarOffset=Math.max(0,Math.min(27,daily.accday+(daily.rewarded?0:1)-2))*150;
@@ -94,7 +97,12 @@
         }});
         if(next) {
           edit(nodes,1949,{active:!!next.rewardItem});edit(nodes,5191,{active:!next.rewardItem});
-          if(next.rewardItem){label(nodes,7087,next.name);picture(nodes,2916,next.image);}
+          if(next.rewardItem){
+            label(nodes,7087,next.name);picture(nodes,2916,next.image);
+            // OnlinePrizePanel.itemTexture is its own draw call. In the flat menu it must follow the card's Pattern.
+            const icon=nodeById(nodes,2916),pattern=nodeById(nodes,603);
+            icon.widget={...icon.widget,depth:pattern.widget.depth+1};
+          }
           else {
             const currency=next.blueGem?"gemReward":next.bloodGem?"honorReward":"goldReward";
             picture(nodes,920,icons[currency]);label(nodes,5524,next.blueGem||next.bloodGem||next.gold);
