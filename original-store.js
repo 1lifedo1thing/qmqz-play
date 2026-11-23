@@ -2,7 +2,8 @@
   "use strict";
   let group=8,currency="",subtype=0,offset=0,total=0,viewFilter="",selection=null;
   const filters=new Map();
-  let listKey="",listClock={};
+  let listKey="";
+  const offerEntries=new Map();
   let gachaOffset=0, rechargeTab=0, rechargeBack="StoreWindow", pending=null, receipt=null, lastDraw=null;
   const pools=[
     {id:1048646,buttons:[3959,7612],prices:[14,16],name:"荣誉抽奖"},
@@ -298,7 +299,7 @@
     }
     total=offers.length;
     const list=[group,currency,subtype].join("/");
-    if(list!==listKey){listKey=list;listClock={};}
+    if(list!==listKey){listKey=list;offerEntries.clear();}
     const gridNode=nodeById(nodes,grid);gridNode.p=[gridNode.p[0],gridNode.p[1]+offset];
     function cost(target,id,kind){
       const w=nodeById(target,id)?.widget;
@@ -312,13 +313,25 @@
       else notify(kind==="bloodGem"?29:31);
       return false;
     }
+    // Schedule a card when it enters the clipped grid. Scrolls and modal redraws retain its clock.
+    const cardHeight=pref.hit[3], clip=nodeById(nodes,panel).clip;
+    const firstTop=gridNode.p[1]+cardHeight/2;
+    const firstRow=Math.max(0,Math.floor((firstTop-clip[1]-clip[3]/2)/cardHeight));
+    const lastRow=Math.ceil((firstTop-clip[1]+clip[3]/2)/cardHeight);
+    const clock={};
+    let entering=0;
     for(const [idx,{row,item}] of offers.entries()) {
+      const rowIndex=Math.floor(idx/2);
+      if(!offerEntries.has(row.id) && rowIndex>=firstRow && rowIndex<lastRow)offerEntries.set(row.id,{
+        name:"store-list-item",clock,delay:200*entering++,duration:200,
+        frames:[{transform:"scaleX(0)",easing:"linear"},{transform:"scaleX(1)"}]
+      });
       const prefix="offer"+row.id+"-", [kind,amount,listPrice]=priceOf(row);
       const active=roles || profile.level>=row.unlockLevel;
       const actor=roles?item:null;
       const copy=clonePrefab(template,prefix,grid,0,{[ref.itemName]:actor?strings[435].replace("{0}",actor.name).replace("{1}",row.time?Math.round(row.time/86400)+"天":catalog.permanent):item.name,[ref.price]:ref.saleObj?listPrice:amount,
         [ref.lockLabel]:!active?strings[166].replace("{0}",row.unlockLevel):"",[ref.itemDecs]:actor?"":item.info||""},
-        {p:[(idx%2)*466,-Math.floor(idx/2)*236], sequence:{name:"store-list-item",clock:listClock,delay:idx*1000/60,duration:0}});
+        {p:[(idx%2)*466,-rowIndex*cardHeight],sequence:offerEntries.get(row.id)});
       picture(copy,prefix+ref.itemIcon,actor?portraits.find(p=>p.id===actor.id)?.bust:item.icon);cost(copy,prefix+ref.currency,kind);
       if(roles && actor)edit(copy,prefix+pref.id,{label:actor.name,action:()=>{qmqzStoreItems.origin("StoreWindow");qmqzRoleMedia.store(actor.id,"StoreWindow",openDialog);}});
       else edit(copy,prefix+pref.id,{label:item.name,itemId:item.id,action:()=>qmqzStoreItems.open(item,openDialog)});

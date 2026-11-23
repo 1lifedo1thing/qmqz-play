@@ -71,6 +71,7 @@
   let equipmentItems=new Map();
   const tintedImages = new Map();
   const touches = new Map();
+  let triggerPrimed=false;
   let layout, overlay, allyCanvas, allyContext, unity, ctx, observer, drawFrame, pending;
   let allyInk=false;
   let state = {}, modal = "", carouselPage=0, gunOpen=false, hitBoxes = [], geometry = new Map();
@@ -678,7 +679,7 @@
     if ([...touches.values()].some(t=>t.action==="refill")) send("refill-up");
     touches.clear();
     if (moving) send("move:0,0");
-    if (firing) send("fireUp");
+    if (firing) send("fireCancel");
     refresh();
   }
 
@@ -760,7 +761,10 @@
         else if(existing?.firing){existing.action="fire";send("look-up");}
       }
       if ([...touches.values()].some(t=>t.action===action || (action==="grenade"||action==="flash")&&(t.action==="grenade"||t.action==="flash"))) return;
-      const firing=(action==="aim" || action==="fire") && onFire;
+      // A prepared telescope can also be fired by releasing the aiming drag.
+      const scopedDrag=action==="aim" && state.sightType===3 && state.aiming &&
+        ![...touches.values()].some(t=>t.firing);
+      const firing=((action==="aim" || action==="fire") && onFire) || scopedDrag;
       touch={action, hit, firing, previousSlot:state.weaponSlot, ...point, firstX:point.x, firstY:point.y, dx:0,dy:0, lastX:e.clientX,lastY:e.clientY};
       touches.set(e.pointerId,touch);
       unity.setPointerCapture(e.pointerId);
@@ -768,7 +772,7 @@
       if (action==="objective") send("objective-down");
       if (action==="refill") send("refill-down");
       if (action==="grenade" || action==="flash") send(action+"-down");
-      if (firing) send("fireDown");
+      if (firing) send(state.sightType===3 && !triggerPrimed && !state.aiming ? "touch-trigger-first" : "fireDown");
       if (["jump","crouch","previous-weapon"].includes(action)) activate(action);
     } else if (!touch) return;
     e.preventDefault(); e.stopImmediatePropagation();
@@ -788,7 +792,8 @@
     } else if (e.type==="pointerup" || e.type==="pointercancel") {
       touches.delete(e.pointerId);
       if (touch.action==="move") send("move:0,0");
-      if (touch.firing) send("fireUp");
+      if (touch.firing) send(e.type==="pointerup"?"fireUp":"fireCancel");
+      if ((touch.action==="aim" || touch.action==="fire") && e.type==="pointerup")triggerPrimed=true;
       if (touch.action==="aim") send("look-up");
       if (touch.action==="objective") send("objective-up");
       if (touch.action==="refill") send("refill-up");
@@ -831,6 +836,7 @@
     const wasHeroMode=state.mode==="match" && modeId()===10;
     const previous=state;
     state=event.detail || {};
+    if(state.mode!=="match" || !state.alive)triggerPrimed=false;
     if (state.mode!=="match" || state.side!=="infected" || !state.alive ||
         previous.round!==state.round || previous.side!==state.side) {
       healRemaining=null;

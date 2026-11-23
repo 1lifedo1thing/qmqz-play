@@ -9,6 +9,10 @@ window.createDesktopControls = function (canvas, send, redraw, onHudControl) {
   let desktop = !mobileTouch && matchMedia("(hover:hover) and (pointer:fine)").matches;
   let enabled = false, firing = false, aiming = false, using = "", dx = 0, dy = 0, frame = 0;
   let pendingLock = false, lastWheel = -Infinity, state = {};
+  let firstMotion = 0, lastMotion = 0;
+  const motionWindow = 80; // ms of recent input to deliver after a delayed render.
+  const axis = () => ({last:0, time:-Infinity, suspect:0});
+  let horizontal = axis(), vertical = axis();
   const locked = () => document.pointerLockElement === canvas;
   const hint = document.createElement("span");
   hint.id = "desktop-capture-hint";
@@ -42,6 +46,8 @@ window.createDesktopControls = function (canvas, send, redraw, onHudControl) {
     firing = aiming = false;
     using = "";
     dx = dy = 0;
+    horizontal = axis();
+    vertical = axis();
     cancelAnimationFrame(frame);
     frame = 0;
   }
@@ -49,12 +55,17 @@ window.createDesktopControls = function (canvas, send, redraw, onHudControl) {
     stop();
     if (locked()) document.exitPointerLock();
   }
-  function requestControl() {
+  async function requestControl() {
     if (!enabled || !desktop || pendingLock || locked()) return;
     canvas.focus({preventScroll:true});
     pendingLock = true;
-    try { canvas.requestPointerLock()?.catch(lockFailed); }
-    catch { lockFailed(); }
+    try {
+      await canvas.requestPointerLock({unadjustedMovement:true});
+    } catch (error) {
+      if (error?.name !== "NotSupportedError" || !enabled || document.hidden) { lockFailed(); return; }
+      try { await canvas.requestPointerLock(); }
+      catch { lockFailed(); }
+    }
   }
   function update(next, modal) {
     state = next;
@@ -91,21 +102,48 @@ window.createDesktopControls = function (canvas, send, redraw, onHudControl) {
       e.stopImmediatePropagation();
     }
   }
+  function relativeAxis(value, time, history) {
+    if (!Number.isFinite(value) || Math.abs(value) > 2048) return 0;
+    if (!value) return 0;
+    const recent = time-history.time <= motionWindow;
+    const previous = recent ? history.suspect : 0;
+    const limit = Math.max(48, recent ? Math.abs(history.last)*4 : 0);
+    history.time = time;
+    history.suspect = 0;
+    // A lone pointer recenter can be hundreds of counts even on a tiny movement.
+    // Two comparable samples in the same direction preserve a real fast swipe.
+    if (Math.abs(value) > limit) {
+      if (Math.sign(value) === Math.sign(previous) && Math.abs(value/previous) >= .5 && Math.abs(value/previous) <= 2) {
+        history.last = value;
+        return previous+value;
+      }
+      history.suspect = value;
+      return 0;
+    }
+    history.last = value;
+    return value;
+  }
   function move(e) {
     if (!enabled || !locked() || e.pointerType!=="mouse") return;
-    // Some pointer-lock transitions report the cursor warp from the previous desktop position.
-    // Inspect individual hardware samples when available. Keep valid travel on the other axis.
     const samples=e.getCoalescedEvents?.();
-    const maxX=Math.max(128,canvas.clientWidth*.45), maxY=Math.max(96,canvas.clientHeight*.45);
+    const now=performance.now();
     for(const sample of samples?.length?samples:[e]){
-      if(Number.isFinite(sample.movementX) && Math.abs(sample.movementX)<maxX)dx+=sample.movementX;
-      if(Number.isFinite(sample.movementY) && Math.abs(sample.movementY)<maxY)dy+=sample.movementY;
+      if(now-sample.timeStamp>motionWindow)continue;
+      if(!frame || sample.timeStamp-firstMotion>motionWindow){
+        dx=dy=0;
+        firstMotion=sample.timeStamp;
+      }
+      lastMotion=sample.timeStamp;
+      dx+=relativeAxis(sample.movementX,lastMotion,horizontal);
+      dy+=relativeAxis(sample.movementY,lastMotion,vertical);
+      if(!frame)frame=requestAnimationFrame(flushMotion);
     }
-    if (!frame) frame = requestAnimationFrame(() => {
-      frame = 0;
-      if (dx || dy) send("mouse-look:" + dx.toFixed(2) + "," + dy.toFixed(2));
-      dx = dy = 0;
-    });
+  }
+  function flushMotion() {
+    frame=0;
+    if (enabled && locked() && performance.now()-lastMotion<=motionWindow && (dx || dy))
+      send("mouse-look:" + dx.toFixed(2) + "," + dy.toFixed(2));
+    dx=dy=0;
   }
   function movement() {
     const held = (a,b) => keys.has(a) || keys.has(b);
