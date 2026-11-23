@@ -11,6 +11,7 @@ window.createCombatFeedback = function (redraw) {
   let art, sheet, sequence=0, hitUntil=0, lastHitGrade=0, shownGrade=0, koCount=0, koStart=0;
   let now=0, nextWake=0, wakeTimer=0, active=false;
   let injureUntil=0, injureDirection=0;
+  let coverUntil=0, coverText="";
   let blindAlpha=0;
   const blind="BattlePanel/Panel/GameBlind";
   const targetPanel="windows/TargetPanel/PlayerInfo";
@@ -79,11 +80,15 @@ window.createCombatFeedback = function (redraw) {
       }
       hitUntil=time+(art?.hitSeconds ?? .5)*1000;
     }
+    if(hit.source===0 && hit.throughCover && (hit.hpDamage>0 || hit.armorDamage>0)) {
+      coverText=hit.hpDamage>0 ? "穿墙 −"+hit.hpDamage : "穿墙 护甲 −"+hit.armorDamage;
+      coverUntil=time+(art?.hitSeconds ?? .5)*1000;
+    }
     if (hit.target===0 && hit.hpDamage>0 && Number.isFinite(hit.injureDirection)) {
       injureDirection=hit.injureDirection;
       injureUntil=time+(art?.injureSeconds ?? 1)*1000;
     }
-    if (hit.killed) {
+    if (hit.killed || hit.infected) {
       if (hit.challenge) {
         if (hit.source===0) { koCount=hit.challengeKills; koStart=time; }
         if (hit.target===0) koCount=0;
@@ -100,7 +105,7 @@ window.createCombatFeedback = function (redraw) {
     active=value;
     if (value) return;
     sequence=0;
-    rows.length=0; hitUntil=injureUntil=0; koCount=0; koStart=0; blindAlpha=0;
+    rows.length=0; hitUntil=injureUntil=coverUntil=0; koCount=0; koStart=0; blindAlpha=0;
     privateNotices.length=0; currentTarget=null;
     clearTimeout(wakeTimer); nextWake=0;
   }
@@ -115,7 +120,7 @@ window.createCombatFeedback = function (redraw) {
     const animating=(now<hitUntil && shownGrade<lastHitGrade) ||
       rows.some(row=>row.headshot && now-row.time<300) || (koCount>0 && now-koStart<200);
     if (animating) redraw();
-    const wake=Math.min(hitUntil>now ? hitUntil : Infinity,injureUntil>now ? injureUntil : Infinity,
+    const wake=Math.min(hitUntil>now ? hitUntil : Infinity,injureUntil>now ? injureUntil : Infinity,coverUntil>now ? coverUntil : Infinity,
       rows.length ? rows[0].time+5000 : Infinity);
     if (nextWake!==wake) {
       clearTimeout(wakeTimer);
@@ -128,6 +133,13 @@ window.createCombatFeedback = function (redraw) {
     for (const [path,node] of Object.entries(layout.nodes)) {
       if (Number.isInteger(node.noticeRow)) rowIndexes.set(path,node.noticeRow);
     }
+  }
+  function drawCover(ctx,width,height,widget) {
+    if(!widget || now>=coverUntil)return;
+    ctx.save();
+    ctx.translate(width/2,height/2+38);
+    window.qmqzFonts.draw(ctx,widget,coverText,16,[1,.82,.52,1]);
+    ctx.restore();
   }
   function rowAt(path) {
     const root=path.split("/").slice(0,5).join("/");
@@ -190,7 +202,7 @@ window.createCombatFeedback = function (redraw) {
       if (!row) return;
       const [weapon,type]=art.weapons[row.weapon] || ["default",""];
       if (path.endsWith("/Weapon")) val.sketch=art.bioSketches[row.sourceRole] || weapon;
-      if (path.endsWith("/Type")) val.text=art.bioSketches[row.sourceRole] ? "" : type;
+      if (path.endsWith("/Type")) val.text=row.infected ? "感染" : art.bioSketches[row.sourceRole] ? "" : type;
       if (path.endsWith("/Killer") || path.endsWith("/Deader")) {
         const killer=path.endsWith("/Killer");
         val.text=(killer ? row.sourceName : row.targetName) || "";
@@ -247,5 +259,5 @@ window.createCombatFeedback = function (redraw) {
       ctx.restore();placed.push({x,y});
     }
   }
-  return {setup,prepareHeroWord,drawHeroWord,setActive,beginFrame,visible,value,scale,rotation,sketch,privateScale,arrowOffset,allyNames};
+  return {setup,prepareHeroWord,drawHeroWord,drawCover,setActive,beginFrame,visible,value,scale,rotation,sketch,privateScale,arrowOffset,allyNames};
 };

@@ -74,7 +74,7 @@ window.createDesktopControls = function (canvas, send, redraw, onHudControl) {
       state.phase !== "RoundOver" && state.phase !== "MatchOver";
     if (wasEnabled && !enabled) stop();
     const needsCursor = state.mode !== "match" || state.selectionWindow || modal ||
-      state.phase === "MatchOver" || (state.gameMode === 12 && !state.alive);
+      state.phase === "MatchOver" || !state.alive;
     if (needsCursor && locked()) unlock();
     updateHint();
   }

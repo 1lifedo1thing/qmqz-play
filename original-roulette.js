@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const infoId=1048588, normalDraw=1048585, advancedDraw=1048639, reset=1048641;
-  let plate=0, cash=0, vip=0, credits=0, tickets=0;
+  let returnTo="MainUI", plate=0, cash=0, vip=0, credits=0, tickets=0;
   let info={}, gifts=[], finished=[], busy=false, ready=false, highlight=-1, animation=0, resetting=false;
   let selected=0, exchangeOffset=0, firstCallback=null, celebration=null, catalog, showNotice;
   const send=(id,fields={})=>window.qmqzUnity.SendMessage("WebClient","Command","original-menu:"+JSON.stringify({id,fields}));
@@ -11,6 +11,7 @@
     send(infoId,{lotterytype:next});
   }
   function enter(go,from,advanced=false) {
+    if(from!=="RouletteWindow")returnTo=from||"MainUI";
     go("RouletteWindow");changePlate(advanced?2:0);
   }
   function first(go,open) {
@@ -109,7 +110,7 @@
     label(nodes,3376,cfg.spinPrice*Math.max(0,1-tickets));label(nodes,8267,cfg.spinPrice*Math.max(0,10-tickets));
     label(nodes,6663,cfg.prices[Math.min(finished.length,7)].price);
     show(554,finished.length===8);show(4316,finished.length!==8);
-    act(568,()=>{animation++;busy=false;go("MainUI");});
+    act(568,()=>{animation++;busy=false;go(returnTo);});
     act(1593,()=>{if(!busy&&advanced)changePlate(0);});
     act(3431,()=>{if(busy||advanced)return;if(vip<3){notify(519,3);return;}changePlate(2);});
     act(962,()=>openDialog("RouletteHelp"));

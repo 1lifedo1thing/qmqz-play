@@ -2,7 +2,7 @@
 (() => {
   "use strict";
   let page=0, pageCount=0, pageTurn=null, model, inspectedId=0, pending=false, legendDetail=false;
-  let makerStake=[1,1], makerRunning=false, confirmation=null;
+  let makerStake=[1,1], makerRunning=false, reelMotion=null, makerClock={}, speechClock={}, confirmation=null;
   let returnTo="MainUI";
   function open(go,source="MainUI") {returnTo=source;page=0;pageTurn=null;model=null;inspectedId=0;go("UpgradeListWindow");}
   function item(part,go,source) {returnTo=source;page=0;pageTurn=null;legendDetail=false;model=part.modelType;inspectedId=part.id;go(part.type===1?"PromoteWindow":"NewPromoteWindow");}
@@ -42,56 +42,137 @@
   async function overlay(name,nodes,h) {
     return (await h.data(name)).filter(n=>!h.nodeById(nodes,n.id)).map(n=>({...n,overlay:true}));
   }
-  function maker(h) {makerStake=[1,1];h.openDialog("SlotForm");}
+  function maker(h) {
+    makerStake=[1,1];makerClock={};speechClock={};h.openDialog("SlotForm");
+  }
+  const reelIds=[7325,8634,4884,6353];
+  const matchCount=ids=>Math.max(0,...ids.map(id=>ids.filter(other=>other===id).length));
+  const pause=ms=>new Promise(resolve=>setTimeout(resolve,Math.max(0,ms)));
+  // TumbleSlot.Update accelerates at 1000 units/s², caps at 1000 units/s, then focuses after 2.7s.
+  function reelFrames(index,first,last) {
+    const pitch=120, cycle=7*pitch, initial=((index-first+7)%7)*pitch;
+    const frame=(offset,y)=>({offset,translate:"0 "+y+"px"});
+    const frames=[];
+    const timeAt=distance=>distance<500?Math.sqrt(distance/500):1+(distance-500)/1000;
+    const times=Array.from({length:17},(_,i)=>({t:i/16}));
+    for(let distance=initial+pitch;distance<=2200;distance+=cycle)times.push({t:timeAt(distance),wrap:true});
+    times.push({t:2.7});
+    let loops=0;
+    for(const {t,wrap} of times.sort((a,b)=>a.t-b.t)) {
+      const distance=t<=1?500*t*t:500+1000*(t-1);
+      frames.push(frame(t/2.7,initial-distance+loops*cycle));
+      if(wrap)frames.push(frame(t/2.7,initial-distance+(++loops)*cycle));
+    }
+    frames.push(frame(1,((index-last+7)%7)*pitch));
+    return frames;
+  }
+  function paintSlot(el,motion) {
+    if(motion.focus)el.style.mixBlendMode="plus-lighter";
+    const age=qmqzMenuFX.start(motion.clock);
+    const animation=el.animate(motion.frames,motion.options);
+    animation.currentTime=age;
+  }
+  function slotReels(nodes,saved,h) {
+    reelIds.forEach((id,i)=>{
+      const children=nodes.filter(n=>n.parent===id);
+      const cells=children.filter(n=>/^Icon[1-7]$/.test(n.name)).sort((a,b)=>a.name.localeCompare(b.name));
+      const icons=cells.map(cell=>nodes.find(n=>n.parent===cell.id&&n.name==="Icon"));
+      const cardIds=icons.map(n=>Number(n.widget.image.match(/Icon_Slot_(\d+)/)[1]));
+      const spinning=reelMotion?.indices.includes(i);
+      const showing=spinning?reelMotion.result.ids[i]:saved?.ids[i];
+      const previous=spinning?reelMotion.before?.ids[i]:null;
+      const first=Math.max(0,cardIds.indexOf(previous)),last=cardIds.indexOf(showing);
+      const empty=children.find(n=>n.name==="Empty");
+      h.edit(nodes,empty.id,{active:!showing||spinning&&!previous,z:-3});
+      if(spinning&&!previous)empty.slotMotion={clock:reelMotion.clock,frames:[{translate:"0 0"},{translate:"-100px 0"}],
+        options:{duration:300,fill:"both"}};
+      if(!spinning&&showing&&saved.ids.filter(card=>card===showing).length>1) {
+        // TumbleSlot.Focus instantiates laohuji. Its emitter stacks five 0.6s billboards at 30/s.
+        const part=h.nodeById(nodes,id);
+        for(let particle=0;particle<5;particle++)nodes.push({id:"slot-focus-"+id+"-"+particle,parent:part.parent,
+          name:"laohuji",active:true,p:[part.p[0]-4.51,part.p[1]-5.88],s:[289.44,289.44],z:-2,
+          widget:{kind:"UITexture",pivot:4,color:[229,122,248,255],depth:0,image:"slot-focus.png"},
+          slotMotion:{focus:true,clock:speechClock,frames:[{opacity:0,scale:.954},{offset:.11,opacity:1,scale:.964},
+            {offset:.48,opacity:1,scale:.996},{offset:.76,opacity:1,scale:.999},{opacity:0,scale:1}],
+            options:{delay:particle*1000/30,duration:600,iterations:Infinity,fill:"both"}}});
+      }
+      cells.forEach((cell,k)=>{
+        cell.active=spinning||k===last;
+        if(spinning)icons[k].slotMotion={clock:reelMotion.clock,frames:reelFrames(k,first,last),
+          options:{delay:300+reelMotion.indices.indexOf(i)*125,duration:2700,fill:"both"}};
+      });
+    });
+  }
+  async function roll(before,result,indices,render) {
+    const clock={};
+    reelMotion={before,result,indices,clock};
+    await render();
+    const elapsed=()=>qmqzMenuFX.start(clock);
+    for(let i=0;i<indices.length;i++) {
+      await pause(3000+i*125-elapsed());
+      qmqzAudio("event",46);
+    }
+    await pause(3500+(indices.length-1)*125-elapsed());
+    const matches=matchCount(result.ids);
+    qmqzAudio("event",matches>=2?45+matches:50);
+    reelMotion=null;speechClock={};
+  }
   async function showSlot(nodes,profile,save,h) {
-    const {edit,label,picture,nodeById,dialog,render,openDialog,closeDialog,notify}=h;
-    const m=await overlay("SlotForm",nodes,h),saved=save.slot;
-    const found=!!saved, current=saved?[saved.moneytype,saved.multiple]:makerStake;
-    edit(m,6434,{active:true});edit(m,2004,{active:!found});edit(m,7402,{active:found});
-    label(m,4831,save.study);label(m,6807,profile.diamond);label(m,4766,profile.gold);
-    label(m,917,found?"本次可收取 "+saved.points+" 强化点，最多可达到 "+saved.best+" 强化点。":
-      "本次研究最少可以得到强化点 "+200*current[1]+"，最多可以得到强化点 "+100000*current[1]+"。");
+    const {edit,label,dialog,render,openDialog,closeDialog,notify}=h;
+    const [m,strings]=await Promise.all([overlay("SlotForm",nodes,h),h.data("strings")]);
+    const saved=save.slot,shown=makerRunning?(reelMotion?.before||null):saved;
+    const current=saved?[saved.moneytype,saved.multiple]:makerStake;
+    // SlotForm's stretched texture is behind the machine, inside the Forms layer above the calling window.
+    edit(m,8153,{z:1});
+    edit(m,6434,{active:true});edit(m,2004,{active:!makerRunning&&!saved});edit(m,7402,{active:!makerRunning&&!!saved});
+    const format=(id,...args)=>strings[id].replace(/\{(\d+)\}/g,(_,k)=>args[k]);
+    const balance=n=>n>=100000000?Math.floor(n/10000)+"w":n;
+    label(m,4831,format(365,balance(save.study)));label(m,6807,format(366,balance(profile.diamond)));label(m,4766,format(367,balance(profile.gold)));
+    const matches=shown?matchCount(shown.ids):0;
+    const words=shown?.ids.length===4?(shown.points===shown.best?378:377):373+matches;
+    label(m,917,format(words,shown?.points??200*current[1],shown?.best??100000*current[1]));
+    [8134,3163,4206].forEach((id,i)=>edit(m,id,{active:i===(matches>=3?2:matches===2?1:0)}));
+    edit(m,2442,{sequence:{name:"maker-speech",clock:speechClock,delay:0,duration:500,
+      frames:[{translate:"440px 0",scale:0},{translate:"0 0",scale:1}]}});
+    for(const light of m.filter(n=>n.parent===7218))light.slotMotion={clock:makerClock,
+      frames:[{rotate:"0deg"},{rotate:"180deg"},{rotate:"360deg"}],options:{duration:1000,easing:"steps(2,end)",iterations:Infinity}};
     label(m,4835,saved?.appendCost||"");
     const betIds=[[5536,1,1],[2853,1,10],[1716,0,1],[8958,0,10],[5310,0,100]];
-    const interact=(id,fn)=>{if(dialog==="SlotForm"&&!makerRunning)edit(m,id,{action:fn});};
+    const interact=(id,fn)=>{if(dialog==="SlotForm"&&!makerRunning)edit(m,id,{action:()=>{if(!makerRunning)fn();}});};
     for(const [id,type,multiple] of betIds) {
       const check=m.find(n=>n.parent===id&&n.name==="Checked");
       if(check)edit(m,check.id,{active:current[0]===type && current[1]===multiple});
-      if(!found)interact(id,()=>{makerStake=[type,multiple];render();});
+      if(!saved)interact(id,()=>{makerStake=[type,multiple];speechClock={};render();});
     }
-    const slots=[7325,8634,4884,6353];
-    slots.forEach((id,i)=>{
-      for(const child of m.filter(n=>n.parent===id)) {
-        if(child.name==="Empty"){
-          edit(m,child.id,{active:true});picture(m,child.id,"Icon_Slot_"+(saved?.ids[i]||0)+"-964777403.png");
-        } else if(/^Icon[1-7]$/.test(child.name))edit(m,child.id,{active:false});
-      }
-    });
-    const run=async(limit,stop)=>{
+    slotReels(m,makerRunning?reelMotion?.before:saved,h);
+    const run=async(limit,stop,append=false)=>{
       if(makerRunning)return;
-      makerRunning=true;
+      makerRunning=true;render();
       try {
         for(let i=0;i<limit;i++) {
-          await command(786466,{moneytype:makerStake[0],multiple:makerStake[1]});
+          await command(append?786468:786466,append?{}:{moneytype:makerStake[0],multiple:makerStake[1]});
           const now=(await qmqzReadPosterRole(profile.roleid)).slot;
           if(!now){notify(makerStake[0]?29:28);break;}
-          if(limit===1 || now.ids.some(id=>now.ids.filter(v=>v===id).length>=stop))break;
+          if(append && now.appends===saved.appends)break;
+          await roll(append?saved:null,now,append?[3]:[0,1,2],render);
+          if(limit===1 || matchCount(now.ids)>=stop)break;
           await command(786470,{});
+          notify(356,now.points);
         }
-      } finally {makerRunning=false;render();}
+      } finally {reelMotion=null;makerRunning=false;render();}
     };
-    if(!found){
+    if(!saved){
       interact(4394,()=>run(1,0));interact(1614,()=>openDialog("10TimesResearch"));
     } else {
-      interact(8830,async()=>{await command(786470,{});render();});
-      interact(3684,async()=>{
+      interact(8830,async()=>{await command(786470,{});notify(356,saved.points);speechClock={};render();});
+      interact(3684,()=>{
         if(saved.appends>=3){notify(328);return;}
         if(saved.ids.length===4 && saved.points>=saved.best){notify(330);return;}
         if(profile.gold<saved.appendCost){notify(28);return;}
-        await command(786468,{});render();
+        run(1,0,true);
       });
     }
-    interact(4977,async()=>{if(found)await command(786470,{});closeDialog();});
+    interact(4977,async()=>{if(saved)await command(786470,{});closeDialog();});
     interact(3501,()=>openDialog("OddsTable"));nodes.push(...m);
     if(dialog==="SlotForm")return;
     const nested=await overlay(dialog,nodes,h);
@@ -244,7 +325,8 @@
       groups.get(row.modelType).push(row);
     }
     const owned=new Set(save.items);
-    const current=group=>group.filter(r=>owned.has(r.id)).sort((a,b)=>b.version-a.version)[0]||group[0];
+    const current=group=>group.find(r=>r.version===save.legendVersions?.[r.modelType])||
+      group.filter(r=>owned.has(r.id)).sort((a,b)=>b.version-a.version)[0]||group[0];
     await showGuide(nodes,profile,save,h,screen);
     if(screen==="UpgradeListWindow") {
       inspectedId=0;
@@ -293,6 +375,7 @@
     edit(nodes,2684,{action:()=>{if(typeof returnTo==="function")returnTo();else go("UpgradeListWindow");}});
     if(screen==="PromoteWindow") {
       const text=await h.data("strings"),mine=owned.has(part.id);
+      if(!next)legendDetail=false;
       edit(nodes,895,{active:false});edit(nodes,3353,{active:!legendDetail});edit(nodes,4919,{active:legendDetail});
       edit(nodes,3890,{active:false});edit(nodes,8291,{active:!next});edit(nodes,5033,{active:true});
       label(nodes,2622,part.name);picture(nodes,2271,part.detailImage||part.image);label(nodes,456,part.name);
@@ -305,7 +388,7 @@
       if(next){label(nodes,812,next.name);picture(nodes,634,next.image);label(nodes,7114,next.star);}
       const getCard=()=>ask(h,text[580],()=>qmqzRoulette.enter(go,screen,true));
       edit(nodes,3839,{action:getCard});
-      if(next)edit(nodes,558,{active:!owned.has(next.id),action:async()=>{
+      if(next)edit(nodes,558,{active:!owned.has(next.id)||save.legendVersions?.[part.modelType]===part.version,action:async()=>{
         if(save.cards<next.price){h.notify(536);getCard();return;}
         await command(786459,{gunid:part.id,newgunid:next.id});render();
       }});
@@ -339,6 +422,6 @@
 
     }
   }
-  window.qmqzUpgrade={open,item,display,inCarousel,turn,maker,displaySlot,backFromSlot};
+  window.qmqzUpgrade={open,item,display,inCarousel,turn,maker,displaySlot,backFromSlot,paintSlot};
 })();
 

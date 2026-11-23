@@ -1,5 +1,5 @@
 // Run only the bundled offline game's functions inside a dedicated browser worker.
-import { loadPyodide } from "./StreamingAssets/rules/pyodide.js";
+import { loadPyodide } from "./StreamingAssets/rules/pyodide.mjs";
 
 async function start() {
   const base = new URL("./StreamingAssets/rules/", self.location.href);

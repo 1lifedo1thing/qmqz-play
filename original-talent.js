@@ -69,7 +69,7 @@
     }});
   }
   function benefits(nodes,save,data,fields,text,h) {
-    const keys=["addHp","addTime","addDmg","lifeDrain","pistolrange","meleerange","addPveHp"];
+    const keys=["addHp","addTime","addDmg","lifeDrain","pistolrange","meleerange"];
     const concepts=[20,21,22,23,97,98,123],messages=[396,397,398,399,607,608,24];
     for(const card of nodes.filter(n=>n.parent===757))card.p=[card.p[0],card.p[1]+benefitOffset];
     function shade(root,enabled) {
@@ -85,7 +85,8 @@
       shade(root,active);
     }
     for(const [root,v] of Object.entries(fields.ChipAddition)) {
-      const amount=save.gifts.reduce((n,id)=>n+Number(data.Gift.find(r=>r.id===id)?.[keys[v.type]]||0),0);
+      const amount=v.type===6 ? Number(save.gifts.includes(11)) :
+        save.gifts.reduce((n,id)=>n+Number(data.Gift.find(r=>r.id===id)?.[keys[v.type]]||0),0);
       h.label(nodes,v.chipName,data.Concept[concepts[v.type]]);
       const message=v.type===6?data.Concept[24]:text[messages[v.type]];
       h.label(nodes,v.chipInfo,message.replace("{0}",v.type===1?amount*20:amount));

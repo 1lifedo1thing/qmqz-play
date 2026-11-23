@@ -6,7 +6,6 @@
   drawings.className="ngui-drawings";fieldLayer.className="ngui-fields";
   stage.append(drawings,fieldLayer);
   const records = new Map();
-  const images = new Map();
   const values = {name: ""};
   const anchors = [[-1,-1],[-1,0],[-1,1],[0,1],[1,1],[1,0],[1,-1],[0,-1],[0,0]];
   let state = window.qmqzLastState || {};
@@ -86,10 +85,6 @@
       return rows;
     }).catch(error=>{records.delete(name);throw error;}));
     return records.get(name);
-  }
-  async function loadImage(name) {
-    const image = await window.qmqzUiDensity.load(resource(name));
-    images.set(name,image);
   }
   const command = value => window.qmqzUnity?.SendMessage("WebClient", "Command", value);
   const color = c => "rgba(" + [c[0], c[1], c[2], c[3]/255].join(",") + ")";
@@ -438,7 +433,8 @@
     if(nodeById(nodes,1841)){
       const {tabs,pages}=await data("window-navigation");
       const selected=tabs[pages[screen]]?pages[screen]:"Main";
-      await Promise.all(Object.values(tabs).flatMap(tab=>tab.states.map(style=>loadImage(style.image))));
+      const tabUrls = new Map(await Promise.all(Object.values(tabs).flatMap(tab=>tab.states.map(async style =>
+        [style.image, (await window.qmqzUiDensity.load(resource(style.image))).src]))));
       const actions={Main:()=>go("MainUI"),NewBattle:()=>go("NewBattleWindow"),
         UpgradeList:()=>qmqzUpgrade.open(go),Social:()=>qmqzSocial.open("SocialWindow",socialHooks)};
       for(const [name,tab] of Object.entries(tabs)){
@@ -452,7 +448,7 @@
           const next=pressed?tab.states[1]:style;
           if(next===shown)return;
           shown=next;
-          art.get(tab.icon).style.backgroundImage='url("'+images.get(next.image).src+'")';
+          art.get(tab.icon).style.backgroundImage='url("'+tabUrls.get(next.image)+'")';
           const text=art.get(tab.label);
           text.textContent=label.widget.text;
           text.style.color=color(next.color);
@@ -636,7 +632,7 @@
         });
       }
     }
-    if(["GachaListDialog","PrizeInfo","QuickMode","Annoncement","BulletPurchase","ModeCreate","ModeSelectNew","ConfirmJoin","ConfirmBuy","PackItem","StoreItemDetails","GoRecharge","StoreReceipt","GachaPrize","OpenRoulette","RouletteHelp","WheelPrize","WheelDetail","ExchangeDialog","FirstRechargeInfo","ResearchPointsMaker","SplinterMaker","UpgradeConfirm","WeekReceipt","WeekUpgrade"].includes(dialog)) {
+    if(["GachaListDialog","PrizeInfo","QuickMode","Annoncement","BulletPurchase","ModeCreate","ModeSelectNew","ConfirmJoin","ConfirmBuy","PackItem","StoreItemDetails","GoRecharge","StoreReceipt","GachaPrize","OpenRoulette","RouletteHelp","WheelPrize","WheelDetail","ExchangeDialog","FirstRechargeInfo","ResearchPointsMaker","SplinterMaker","OddsTable","10TimesResearch","UpgradeConfirm","WeekReceipt","WeekUpgrade"].includes(dialog)) {
       const dimmer=(await data("UIDimmer")).filter(n=>!nodeById(nodes,n.id)).map(n=>({...n,overlay:true}));
       edit(dimmer,8896,{modalBackground:true,dismissBackground:["QuickMode","ModeSelectNew","PackItem","StoreItemDetails"].includes(dialog)?closeDialog:null});
       if(dialog==="GachaPrize"){
@@ -705,7 +701,7 @@
     const t=i/32;
     return (t-Math.sin(t*2*Math.PI)/(2*Math.PI)).toFixed(5);
   }).join(",")+")";
-  function widget(n,g) {
+  function widget(n,g,images) {
     const w=n.widget;
     const el=document.createElement("div"), a=w.color;
     const px=(w.pivot%3)/2, py=Math.floor(w.pivot/3)/2;
@@ -756,7 +752,11 @@
       el.style.opacity=a[3]/255;
       el.style.filter=spriteTint(a);
       if(w.depotHighlight)qmqzInventory.highlight(el,image,w);
-      if (g.sx<0 || g.sy<0 || n.rotate) el.style.transform="scale("+(g.sx<0?-1:1)+","+(g.sy<0?-1:1)+") rotate("+(n.rotate||0)+"deg)";
+      const flipX=(g.sx<0)!==Boolean(n.flipX);
+      if (flipX || g.sy<0 || n.rotate) {
+        el.style.transformOrigin=(px*100)+"% "+(py*100)+"%";
+        el.style.transform="scale("+(flipX?-1:1)+","+(g.sy<0?-1:1)+") rotate("+(n.rotate||0)+"deg)";
+      }
     }
     el.dataset.sourceId=n.id;
     return el;
@@ -778,6 +778,10 @@
     }
     if (!window.qmqzUnity || state.booted!==true) return;
     try {
+      const images = new Map();
+      async function loadImage(name) {
+        images.set(name, await window.qmqzUiDensity.load(resource(name)));
+      }
       const nodes=await content(screen);
       const carousel=screen==="MainUI" && nodeById(nodes,4531);
       const destinations=carousel ? await data("poster-links") : null;
@@ -856,7 +860,7 @@
       for(const n of widgets) {
         const g={...world.get(n.id)};
         if(n.stretch===3){g.x=0;g.y=0;g.sx=width;g.sy=height;}
-        const el=widget(n,g);
+        const el=widget(n,g,images);
         if(!el)continue;
         buttonArt.set(n.id,el);
         if(n.modalFade){
@@ -865,6 +869,7 @@
           el.dataset.modalFade="300";
         }
         if(n.particle)qmqzMenuFX.paint(el,n);
+        if(n.slotMotion)qmqzUpgrade.paintSlot(el,n.slotMotion);
         if(n.shopShowcase)qmqzShopPrizes.paint(el,n.shopShowcase);
         if(n.rewardDelay!==undefined||n.rewardScore)qmqzRewardMotion.paint(el,n,g);
         if(n.id==="hud-message" && callboard===302) {

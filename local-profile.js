@@ -9,7 +9,7 @@
 
   function runRules(request) {
     if (!worker) {
-      worker = new Worker("local-rules-worker.js", {type:"module"});
+      worker = new Worker("local-rules-worker.mjs", {type:"module"});
       worker.onmessage = ({data}) => {
         const callback = waiting.get(data.id);
         if (!callback) return;
@@ -139,6 +139,7 @@
     return {killnum:Number(info.killnum)||0,headshots:Number(info.headshots)||0,killrate:Number(info.killrate)||0,
       teamname:info.teamname||"",vipstatus:Number(info.vipstatus)||0,cash:Number(info.cash_all)||0,
       gifts:(info.gifts||[]).map(Number),bought:(info.gift_bought||[]).map(Number),
+      legendVersions:record.equipment?.legendVersions||{},
       vipGifts:(info.vip_gifts||[]).map(Number),
       pve:info.webPveCards||null,slot:info.webSlotPending||null,
       cardUntil:Object.fromEntries([1,2,3].map(i=>[i,info["card_"+i+"_until"]||0])),
@@ -208,7 +209,8 @@
       if (action === "state" && role.originalData && role.rankWaitingType >= 0) action = "rank-cancel";
       // Derive newly projected equipment fields from the original save on its first read.
       if (action === "state" && role.originalData?.web_full_unlock_version >= 2 && role.equipment?.loadouts?.length &&
-          Array.isArray(role.equipment.subjoins) && Number.isInteger(role.talentHp) &&
+          Array.isArray(role.equipment.subjoins) && Number.isInteger(role.talentHp) && Array.isArray(role.equipment.talents?.research) &&
+          typeof role.equipment.chips?.refillClip==="boolean" &&
           role.equipment.loadouts.every(group => Number.isInteger(group.star) && typeof group.canRestoreDefaults==="boolean" &&
             group.slots?.every(slot=>slot && slot.itemId===slot.effectiveItemId))) return snapshot;
       const receiptKey = [id, fields.matchId || ""];

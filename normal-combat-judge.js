@@ -6,7 +6,7 @@
     const before=performance.now();
     try {
       const root=new URL('StreamingAssets/rules/',document.baseURI);
-      const [{loadPyodide},archive]=await Promise.all([import(new URL('pyodide.js',root)),fetch(new URL('game.zip',root))]);
+      const [{loadPyodide},archive]=await Promise.all([import(new URL('pyodide.mjs',root)),fetch(new URL('game.zip',root))]);
       if(!archive.ok)throw Error('无法读取对战规则');
       const py=await loadPyodide({indexURL:root.href});
       py.unpackArchive(await archive.arrayBuffer(),'zip',{extractDir:'/normal-game'});

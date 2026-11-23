@@ -7,7 +7,11 @@
   const portraitPanel = equipWindow+"/Left/RoleSelect/RoleSelectItem";
   const portraitPath = portraitPanel+"/CurentRole";
   const zombieWindow = "windows/ZombieSelect";
-  const challengeDeath = "windows/DeathWindow/PvE";
+  const deathWindow = "windows/DeathWindow";
+  const challengeDeath = deathWindow + "/PvE";
+  const spectatorPanel = deathWindow + "/PvP";
+  const spectatorInfo = spectatorPanel + "/PlayerBoard/PlayerInfo";
+  const spectating = () => !state.alive && state.spectatorSlot >= 0;
   const gridPath = zombieWindow + "/Center/Zombies/Grid";
   const modeBoards = {4:"PersonalScoreBoard", 6:"CaptureScoreBoard", 8:"BioScoreBoard", 10:"TerminatorScoreBoard", 12:"ChallengeScoreBoard"};
   const modeId = () => state.range ? 1 : state.gameMode || state.room?.gameMode || 8;
@@ -59,6 +63,7 @@
     [equipWindow + "/Left/LeftArrow","actor-step:-1"],[equipWindow + "/Left/RightArrow","actor-step:1"],
     ["BombPanel/Mine","objective"], ["BombPanel/Demine","objective"],
     ["BombPanel/Supply","refill"], [challengeDeath+"/Reborn","revive"],
+    [spectatorPanel+"/Back","spectate-prev"],[spectatorPanel+"/Forward","spectate-next"],
     [settings + "Skill/Skill", "ability"], ["States/TopLeft/PauseButton", "options"],
     ["States/Options/Toolbar/Option","fight-settings"],
     ["States/Options/Toolbar/Close", "resume"], ["States/Options/Toolbar/QuitButton", "quitDialog"],
@@ -208,8 +213,13 @@
       if (slot && (!itemAt(activeTab(),slot) || slot===42 && !state.canFlash)) return false;
     }
     if (selecting() && !path.startsWith("windows") && !path.startsWith("Zombie")) return false;
-    if (path==="windows/DeathWindow" || path===challengeDeath)
-      return modeId()===12 && !state.alive && state.phase==="Active" && !modal;
+    if (path===deathWindow) return !state.alive && !modal && !selecting() && state.phase==="Active";
+    if (path===challengeDeath) return modeId()===12;
+    if (path===spectatorPanel) return spectating() || (modeId()!==12 && state.spectatorRespawnSeconds>=0);
+    if (path===spectatorPanel+"/Back" || path===spectatorPanel+"/Forward") return spectating() && state.spectatorCanCycle;
+    if (path===spectatorPanel+"/RebornTime") return modeId()!==12 && state.spectatorRespawnSeconds>=0;
+    if (path===spectatorPanel+"/HP" || path===spectatorPanel+"/AC" || path===spectatorPanel+"/PlayerBoard") return spectating();
+    if (path===spectatorPanel+"/Reborn" || path===spectatorInfo+"/Medals") return false;
     if (path==="BombPanel") return [2,12].includes(modeId()) && state.alive && !modal;
     if (path==="BombPanel/Supply") return modeId()===12 && state.canRefill;
     if (path==="BombPanel/ProgressBarSupply") return modeId()===12 && state.refilling;
@@ -326,6 +336,21 @@
       if (path.endsWith("/Name")) val.text=equipmentItems.get(id)?.name || layout.itemNames[id] || "";
     }
     if (path==="BombPanel/Clock/Label") val.text=clockText(state.blastSeconds);
+    if (path.startsWith(spectatorPanel + "/")) {
+      const member=state.room?.members?.[state.spectatorSlot];
+      if (path===spectatorPanel+"/RebornTime/RebornTime") val.text=clockText(state.spectatorRespawnSeconds);
+      if (path===spectatorPanel+"/HP/HP") val.text=String(state.spectatorHp);
+      if (path===spectatorPanel+"/AC/AC") val.text=String(state.spectatorArmor);
+      if (path===spectatorPanel+"/HP/Slider/Foreground") val.fill=state.spectatorHp/Math.max(1,state.spectatorMaxHp);
+      if (path===spectatorPanel+"/AC/Slider/Foreground") val.fill=state.spectatorArmor/Math.max(1,state.spectatorMaxArmor);
+      if (path===spectatorInfo+"/Name") val.text=state.spectatorName;
+      if (path===spectatorInfo+"/Weapon/WeaponName") val.text=state.spectatorWeapon;
+      if (path===spectatorInfo+"/Weapon/WeaponSketch") val.art=equipmentItems.get(state.spectatorWeaponId)?.sketch;
+      if (path===spectatorInfo+"/LvValue") val.text=member?.level ? String(member.level) : "";
+      if (path===spectatorInfo+"/Rank" && member?.level>=1 && member.level<=120) val.art="rank-"+member.level+".png";
+      if (path===spectatorInfo+"/Logo" && (member?.iconid>=1 && member.iconid<=38 ||
+          member?.iconid>=1001 && member.iconid<=1004 || member?.iconid>=10001 && member.iconid<=10003)) val.art="head-"+member.iconid+".png";
+    }
     if (path===challengeDeath+"/Time") val.text=state.reviveSeconds+"秒";
     if (path===challengeDeath+"/Reborn/Number") val.text=String(state.revivePrice);
     if (path.startsWith("BombPanel/ProgressBar")) {
@@ -656,6 +681,8 @@
       Number(a.widget.class==="UILabel")-Number(b.widget.class==="UILabel") ||
       a.widget.depth-b.widget.depth);
     widgets.forEach(draw);
+    if(state.alive && !modal && !selecting())
+      combatFeedback.drawCover(ctx,width,height,layout.nodes["windows/TargetPanel/PlayerInfo/Name"]?.widget);
     overlay.dataset.phase = state.phase;
     overlay.dataset.side = state.side;
   }
@@ -720,6 +747,11 @@
   }
   function keys(e) {
     if(state.mode!=="match" || modal==="settings" || e.repeat || e.ctrlKey || e.altKey || e.metaKey)return;
+    if (!modal && spectating() && state.spectatorCanCycle && (e.code==="ArrowLeft" || e.code==="ArrowRight")) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      send(e.code==="ArrowLeft" ? "spectate-prev" : "spectate-next");
+      return;
+    }
     if (!modal && state.selectionWindow==="EquipWindow") {
       if(e.code==="Enter" || e.code==="NumpadEnter")activate("enter");
       else if(/^Digit[1-9]$/.test(e.code))selectBag(Number(e.code.slice(5))-1);
@@ -747,13 +779,14 @@
         modal ? hitBoxes.filter(b=>b.action==="resume" || b.action==="quitDialog" || b.action==="fight-settings") : hitBoxes;
       const hit = [...hits].reverse().find(b=>Math.abs(point.x-b.x)<=b.w/2 && Math.abs(point.y-b.y)<=b.h/2);
       if ((modal || selecting()) && !hit) { e.preventDefault(); e.stopImmediatePropagation(); return; }
-      if (!hit && (e.pointerType==="mouse" || !state.alive || ["RoundOver","MatchOver"].includes(state.phase))) return;
+      const orbit=!hit && spectating() && !modal && state.phase==="Active";
+      if (!hit && !orbit && (e.pointerType==="mouse" || !state.alive || ["RoundOver","MatchOver"].includes(state.phase))) return;
       // LLayout.GetTriggerRect uses the saved dock even while the drag graphic follows the aiming finger.
       const dock=qmqzTouchLayout.position("Trigger",layout.defaults.Trigger,width,height), stick=geometry.get(rocker);
       const fireSize=Math.abs(layout.nodes[trigger+"/Dock"].scale[0]*dock.scale);
       const onFire=Math.hypot(point.x-dock.x,point.y-dock.y)<=fireSize/2;
       const onStick=Math.hypot(point.x-stick.x,point.y-stick.y)<=64*Math.abs(stick.sx);
-      let action=hit?.action || (onFire?"aim":onStick?"move":point.x<0?"move":"aim");
+      let action=hit?.action || (orbit?"spectate-look":onFire?"aim":onStick?"move":point.x<0?"move":"aim");
       if(action==="aim"){
         const existing=[...touches.values()].find(t=>t.action==="aim");
         if(onFire && [...touches.values()].some(t=>t.firing))return;
@@ -783,6 +816,10 @@
       // TouchMover uses a 16-pixel dead zone and normalises touch input. Only its gamepad path is analogue.
       if (length<16) send("move:0,0");
       else send("move:"+(x/length).toFixed(4)+","+(y/length).toFixed(4));
+    } else if (e.type==="pointermove" && touch.action==="spectate-look") {
+      const ratio=720/Math.max(1,unity.clientHeight);
+      if (spectating() && !modal) send("spectate-look:"+((e.clientX-touch.lastX)*ratio).toFixed(2)+","+((e.clientY-touch.lastY)*ratio).toFixed(2));
+      touch.lastX=e.clientX; touch.lastY=e.clientY;
     } else if (e.type==="pointermove" && touch.action==="aim") {
       const x=e.clientX-touch.lastX, y=e.clientY-touch.lastY;
       // Rebase a discontinuous contact (rotation or browser re-centering) at its new position.
@@ -860,6 +897,13 @@
       if (!pending) pending=readLayout().catch(error=>{ pending=null; console.error("原版战斗界面加载失败",error); });
     } else {
       modal="";
+      if (previous.mode==="match") {
+        overlay.width=overlay.height=1;
+        allyCanvas.width=allyCanvas.height=1;
+        allyInk=false;
+        equipmentArt.clear();
+        tintedImages.clear();
+      }
       if(ammoNotice)ammoNotice.hidden=true;
       clearInput();
     }

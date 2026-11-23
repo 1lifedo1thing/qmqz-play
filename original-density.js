@@ -3,19 +3,37 @@
   "use strict";
   const media = matchMedia("(min-resolution: 1.5dppx)");
   const decoded = new Map();
+  const pending = new Map();
+  const budget = 32 * 1024 * 1024;
+  let decodedBytes = 0;
   let manifest;
 
   function imageAt(url, ratio) {
-    if (!decoded.has(url)) {
-      const image = new Image();
-      image.dataset.ratio = ratio;
-      image.src = url;
-      decoded.set(url, image.decode().then(() => image).catch(error => {
-        decoded.delete(url);
-        throw error;
-      }));
+    const cached = decoded.get(url);
+    if (cached) {
+      decoded.delete(url);
+      decoded.set(url, cached);
+      return cached;
     }
-    return decoded.get(url);
+    if (pending.has(url)) return pending.get(url);
+    const image = new Image();
+    image.dataset.ratio = ratio;
+    image.src = url;
+    const ready = image.decode().then(() => {
+      const bytes = image.naturalWidth * image.naturalHeight * 4;
+      if (bytes <= budget) {
+        while (decodedBytes + bytes > budget) {
+          const [oldUrl, old] = decoded.entries().next().value;
+          decoded.delete(oldUrl);
+          decodedBytes -= old.naturalWidth * old.naturalHeight * 4;
+        }
+        decoded.set(url, image);
+        decodedBytes += bytes;
+      }
+      return image;
+    }).finally(() => pending.delete(url));
+    pending.set(url, ready);
+    return ready;
   }
 
   async function load(url) {

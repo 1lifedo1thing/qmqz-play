@@ -4,7 +4,7 @@
   const filters=new Map();
   let listKey="";
   const offerEntries=new Map();
-  let gachaOffset=0, rechargeTab=0, rechargeBack="StoreWindow", pending=null, receipt=null, lastDraw=null;
+  let gachaOffset=0, gachaBack="MainUI", rechargeTab=0, rechargeBack="StoreWindow", pending=null, receipt=null, lastDraw=null;
   const pools=[
     {id:1048646,buttons:[3959,7612],prices:[14,16],name:"荣誉抽奖"},
     {id:1048647,buttons:[5115,6738],prices:[15,17],name:"钻石抽奖"},
@@ -13,8 +13,8 @@
   const send=(id,fields)=>window.qmqzUnity?.SendMessage("WebClient","Command","original-menu:"+JSON.stringify({id,fields}));
   const setOffset=n=>{offset=Math.max(0,Math.min(n,Math.max(0,Math.ceil(total/2)*236-520)));};
   const tabIds=[[5422,8],[1800,1],[4054,2],[2783,3],[4482,4],[4255,5]];
-  function gacha(go){begin();go("GachaWindow");}
-  function begin(){listKey="";qmqzShopPrizes.begin();group=8;offset=0;selection=null;currency="";subtype=0;viewFilter="";filters.clear();gachaOffset=0;rechargeTab=0;lastDraw=null;}
+  function gacha(go,back="MainUI"){begin();gachaBack=back;go("GachaWindow");}
+  function begin(){gachaBack="MainUI";listKey="";qmqzShopPrizes.begin();group=8;offset=0;selection=null;currency="";subtype=0;viewFilter="";filters.clear();gachaOffset=0;rechargeTab=0;lastDraw=null;}
   function filterProgress(m,now) {
     const age=Math.min(1,(now-m.start)/m.duration);
     return m.from+(m.to-m.from)*age;
@@ -90,11 +90,11 @@
     const shell=(await data("StoreShell")).filter(n=>!nodeById(nodes,n.id)).map(n=>({...n}));
     const bg=(await data("MainUI")).find(n=>n.id===7805);
     nodes.push(...shell,{...bg});edit(nodes,1066,{active:true});edit(nodes,5531,{active:true});
-    edit(nodes,568,{action:()=>go(screen==="RechargeWindow"?rechargeBack:"MainUI")});
-    edit(nodes,3822,{action:()=>{qmqzShopPrizes.begin();go("GachaWindow");}});
+    edit(nodes,568,{action:()=>go(screen==="RechargeWindow"?rechargeBack:screen==="GachaWindow"?gachaBack:"MainUI")});
+    edit(nodes,3822,{action:()=>{if(screen!=="GachaWindow")gachaBack="MainUI";qmqzShopPrizes.begin();go("GachaWindow");}});
     edit(nodes,3871,{action:()=>{begin();go("StoreWindow");}});
     edit(nodes,1129,{action:()=>{if(screen!=="ActivityForm")window.qmqzPosters.destination("ActivityForm|6",go,screen);}});
-    edit(nodes,2561,{action:()=>window.qmqzRoulette.enter(go,screen)});
+    edit(nodes,2561,{action:()=>window.qmqzRoulette.enter(go,screen==="RouletteWindow"?screen:"MainUI")});
     edit(nodes,773,{action:()=>qmqzWeekCards.open(go,screen)});
     const {storeTabs,pages}=await data("window-navigation"),active=pages[screen==="RechargeWindow"?rechargeBack:screen];
     for(const [name,tab] of Object.entries(storeTabs)){
